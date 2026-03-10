@@ -1,0 +1,86 @@
+"""Tests for parsing module."""
+
+import sys
+
+sys.path.append(".")
+
+import parsing
+
+
+def test_basic_prompt():
+    result = parsing.parse_command("a basic prompt")
+    assert result.mode == "text"
+    assert result.display_text == "a basic prompt"
+    assert result.prompt_text == "a basic prompt"
+    assert result.emoji_mode is False
+    assert result.backend_override is None
+
+
+def test_directive():
+    result = parsing.parse_command("a basic prompt [with a directive]")
+    assert result.display_text == "a basic prompt"
+    assert result.prompt_text == "a basic prompt with a directive"
+
+
+def test_post_directive():
+    result = parsing.parse_command("a basic prompt [with a directive] and text after")
+    assert result.display_text == "a basic prompt and text after"
+    assert result.prompt_text == "a basic prompt with a directive and text after"
+
+
+def test_no_closing_bracket():
+    result = parsing.parse_command("a basic prompt [with a directive and text after")
+    assert result.display_text == "a basic prompt"
+    assert result.prompt_text == "a basic prompt with a directive and text after"
+
+
+def test_right_bracket_only():
+    result = parsing.parse_command("a basic prompt with a directive] and text after")
+    assert result.display_text == "a basic prompt with a directive] and text after"
+    assert result.prompt_text == "a basic prompt with a directive and text after"
+
+
+def test_emoji_mode():
+    result = parsing.parse_command("-e a basic prompt")
+    assert result.mode == "text"
+    assert result.emoji_mode is True
+    assert result.display_text == "a basic prompt"
+    assert result.prompt_text == "a basic prompt Respond only with emojis. No text."
+
+
+def test_image_mode():
+    result = parsing.parse_command("-i a sunset")
+    assert result.mode == "image"
+    assert result.display_text == "a sunset"
+    assert result.prompt_text == "a sunset"
+
+
+def test_backend_override():
+    result = parsing.parse_command("-b gemini hello world")
+    assert result.mode == "text"
+    assert result.backend_override == "gemini"
+    assert result.display_text == "hello world"
+    assert result.prompt_text == "hello world"
+
+
+def test_image_with_backend():
+    result = parsing.parse_command("-i -b openai a cat")
+    assert result.mode == "image"
+    assert result.backend_override == "openai"
+    assert result.display_text == "a cat"
+    assert result.prompt_text == "a cat"
+
+
+def test_flags_any_order():
+    result = parsing.parse_command("-b openai -i -e describe a cat")
+    assert result.mode == "image"
+    assert result.emoji_mode is True
+    assert result.backend_override == "openai"
+    assert result.display_text == "describe a cat"
+
+
+def test_image_with_directive():
+    result = parsing.parse_command("-i a sunset [in watercolor style]")
+    assert result.mode == "image"
+    assert result.display_text == "a sunset"
+    assert result.prompt_text == "a sunset in watercolor style"
