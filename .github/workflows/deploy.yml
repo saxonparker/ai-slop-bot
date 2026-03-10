@@ -1,0 +1,114 @@
+name: Test, Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          cd ai_slop_bot
+          pip install anthropic google-genai openai requests boto3 pillow pytest
+
+      - name: Run tests
+        run: |
+          cd ai_slop_bot
+          pytest tests/ -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Build dispatch zip
+        run: |
+          cd ai_slop_dispatch
+          pipenv install
+          make ai_slop_dispatch.zip
+
+      - name: Build bot zip
+        run: |
+          cd ai_slop_bot
+          pipenv install
+          make ai_slop_bot.zip
+
+      - name: Upload dispatch zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dispatch-zip
+          path: ai_slop_dispatch/ai_slop_dispatch.zip
+
+      - name: Upload bot zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-zip
+          path: ai_slop_bot/ai_slop_bot.zip
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dispatch zip
+        uses: actions/download-artifact@v4
+        with:
+          name: dispatch-zip
+          path: ai_slop_dispatch
+
+      - name: Download bot zip
+        uses: actions/download-artifact@v4
+        with:
+          name: bot-zip
+          path: ai_slop_bot
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -input=false
+        env:
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_openai_organization: ${{ secrets.OPENAI_ORGANIZATION }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_openai_organization: ${{ secrets.OPENAI_ORGANIZATION }}

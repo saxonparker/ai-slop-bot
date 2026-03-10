@@ -1,0 +1,14 @@
+build/
+build_dispatch/
+*.zip
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfplan
+terraform/.terraform.lock.hcl

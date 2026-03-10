@@ -1,0 +1,19 @@
+[[source]]
+name = "pypi"
+verify_ssl = true
+url = "https://pypi.org/simple"
+
+[dev-packages]
+pylint = "*"
+pytest = "*"
+
+[packages]
+anthropic = "*"
+google-genai = "*"
+openai = "*"
+requests = "*"
+boto3 = "*"
+pillow = "*"
+
+[requires]
+python_version = "3.12"
