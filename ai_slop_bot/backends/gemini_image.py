@@ -1,6 +1,5 @@
 """Google Gemini (Nano Banana) image generation backend."""
 
-import io
 import os
 
 from google import genai
@@ -19,7 +18,23 @@ class GeminiProvider:
                 response_modalities=["IMAGE", "TEXT"],
             ),
         )
-        for part in response.candidates[0].content.parts:
+
+        if not response.candidates:
+            print(f"GEMINI IMAGE: No candidates returned. Full response: {response}")
+            raise RuntimeError("Gemini returned no candidates — prompt may have been blocked")
+
+        candidate = response.candidates[0]
+        if candidate.finish_reason and candidate.finish_reason.name != "STOP":
+            print(f"GEMINI IMAGE: finish_reason={candidate.finish_reason}")
+
+        text_parts = []
+        for part in candidate.content.parts:
             if part.inline_data is not None:
                 return part.inline_data.data
-        raise RuntimeError("No image was generated in the response")
+            if part.text is not None:
+                text_parts.append(part.text)
+
+        # No image — log whatever text Gemini returned instead
+        text_response = " ".join(text_parts) if text_parts else "(no text either)"
+        print(f"GEMINI IMAGE: No image in response. Text returned: {text_response}")
+        raise RuntimeError(f"No image generated. Gemini said: {text_response}")
