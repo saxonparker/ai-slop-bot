@@ -159,12 +159,13 @@ def test_gemini_image_no_image_raises(mock_client_cls):
     mock_client_cls.return_value = mock_client
     mock_part = MagicMock()
     mock_part.inline_data = None
+    mock_part.text = "I cannot generate that image"
     mock_candidate = MagicMock()
     mock_candidate.content.parts = [mock_part]
     mock_client.models.generate_content.return_value = MagicMock(candidates=[mock_candidate])
 
     import pytest
-    with pytest.raises(RuntimeError, match="No image was generated"):
+    with pytest.raises(RuntimeError, match="No image generated. Gemini said:"):
         GeminiProvider().generate("a sunset")
 
 
