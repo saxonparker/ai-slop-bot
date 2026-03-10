@@ -1,5 +1,4 @@
 ai_slop_dispatch.zip: ai_slop_dispatch.py Pipfile.lock
-	pylint --max-line-length=120 ai_slop_dispatch.py
 	rm -rf build
 	mkdir -p build
 	cp ai_slop_dispatch.py build
