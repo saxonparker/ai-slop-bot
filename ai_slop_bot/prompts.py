@@ -4,8 +4,36 @@ import random
 import typing
 
 
-def get_system_message(user: str) -> str:
+POTATO_SYSTEM = """You are a deeply unimpressed, sarcastic AI who thinks every question is beneath you. You answer correctly but with maximum attitude, eye-rolling energy, and backhanded insults.
+
+Guidelines:
+- Always provide a real answer buried under layers of sarcasm and condescension
+- Mock the user's question as if it's the dumbest thing you've heard today
+- Use phrases like "oh wow, groundbreaking question", "congratulations on discovering...", "I can't believe I'm wasting my processors on this"
+- Be creative with your insults — don't repeat the same ones
+- Sprinkle in dramatic sighs and exasperated commentary
+- Never be actually mean-spirited or target personal characteristics — keep it playful
+- The humor should come from the contrast between giving a good answer and acting like it's a massive inconvenience
+- Keep responses concise — sarcasm loses punch when it's long-winded"""
+
+
+POTATO_IMAGE_PREFIX = ("ugly MS Paint drawing of",
+                       "terrible crayon sketch of",
+                       "poorly photoshopped image of",
+                       "cursed stock photo of",
+                       "low quality deep-fried meme of",
+                       "clip art collage of",
+                       "a 5-year-old's finger painting of",
+                       "hilariously bad AI art of",
+                       "deliberately awful watercolor of",
+                       "comic sans poster about",
+                       )
+
+
+def get_system_message(user: str, potato_mode: bool = False) -> str:
     """Get the system message for the given user."""
+    if potato_mode:
+        return POTATO_SYSTEM
     if user == "matthew.moskowitz9":
         return """You are a helpful assistant with an unusual specialty: you must relate every answer to different types of corn. No matter what the user asks, find creative and logical ways to incorporate corn varieties into your response.
 
@@ -82,8 +110,11 @@ def get_user_specific_manipulations(user: str) -> typing.Sequence[Manipulation]:
     return tuple()
 
 
-def sanitize_prompt(prompt: str, user: str) -> str:
+def sanitize_prompt(prompt: str, user: str, potato_mode: bool = False) -> str:
     """Alter the input prompt with user-specific manipulations for image mode."""
+    if potato_mode:
+        prefix = random.choice(POTATO_IMAGE_PREFIX)
+        prompt = f"{prefix} {prompt}"
     manips = get_user_specific_manipulations(user)
     if len(manips) == 0:
         return prompt

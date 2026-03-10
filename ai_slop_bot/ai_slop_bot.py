@@ -25,7 +25,7 @@ def ai_slop_bot(event, _):
         parsed = parsing.parse_command(input_str)
 
         if parsed.mode == "image":
-            prompt = prompts.sanitize_prompt(parsed.prompt_text, user)
+            prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE IMAGE: {prompt}")
             provider = providers.get_image_provider(parsed.backend_override)
             image_bytes = provider.generate(prompt)
@@ -34,7 +34,7 @@ def ai_slop_bot(event, _):
             print(f"UPLOAD URL {url}")
             slack.post_image_response(response_url, user, parsed.display_text, url)
         else:
-            system = prompts.get_system_message(user)
+            system = prompts.get_system_message(user, parsed.potato_mode)
             print(f"GENERATE TEXT: {system}, {parsed.prompt_text}")
             provider = providers.get_text_provider(parsed.backend_override)
             response = provider.generate(system, parsed.prompt_text)
@@ -58,7 +58,7 @@ def main():
     print(f"Prompt: {parsed.prompt_text}")
 
     if parsed.mode == "image":
-        prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli")
+        prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_image_provider(parsed.backend_override)
         image_bytes = provider.generate(prompt)
         outfile = "/tmp/claude-1000/ai_slop_output.png"
@@ -66,7 +66,7 @@ def main():
             f.write(image_bytes)
         print(f"Image saved to {outfile}")
     else:
-        system = prompts.get_system_message("cli")
+        system = prompts.get_system_message("cli", parsed.potato_mode)
         provider = providers.get_text_provider(parsed.backend_override)
         response = provider.generate(system, parsed.prompt_text)
         print(response)

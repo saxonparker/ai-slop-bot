@@ -38,3 +38,20 @@ def test_get_user_specific_manipulations_empty():
 def test_get_user_specific_manipulations_corn():
     manips = prompts.get_user_specific_manipulations("matthew.moskowitz9")
     assert len(manips) > 0
+
+
+def test_system_message_potato():
+    msg = prompts.get_system_message("someuser", potato_mode=True)
+    assert "sarcastic" in msg
+
+
+def test_potato_overrides_corn():
+    msg = prompts.get_system_message("matthew.moskowitz9", potato_mode=True)
+    assert "sarcastic" in msg
+    assert "corn" not in msg
+
+
+def test_sanitize_prompt_potato():
+    result = prompts.sanitize_prompt("a cat", "someuser", potato_mode=True)
+    assert "a cat" in result
+    assert result != "a cat"  # should have a stupid prefix
