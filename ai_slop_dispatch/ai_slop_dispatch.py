@@ -1,4 +1,4 @@
-"""Dispatch Lambda for /ai-slop. Receives Slack webhook and publishes to SNS."""
+"""Dispatch Lambda for /slop-bot. Receives Slack webhook and publishes to SNS."""
 
 import base64
 import json
@@ -7,6 +7,27 @@ import traceback
 import urllib.parse
 
 import boto3
+
+
+HELP_TEXT = """*slop-bot* — AI text and image generation
+
+*Usage:*
+  `/slop-bot <prompt>` — text response
+  `/slop-bot -i <prompt>` — image generation
+  `/slop-bot -e <prompt>` — emoji-only response
+  `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
+  `/slop-bot -b <backend> <prompt>` — use a specific backend
+
+*Flags can be combined:*
+  `/slop-bot -p -i a beautiful sunset` — potato mode image
+  `/slop-bot -i -b openai a cat` — image with DALL-E
+
+*Hidden directives:*
+  `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
+
+*Backends:*
+  Text: `anthropic` (default), `gemini`, `openai`
+  Image: `gemini` (default), `openai`"""
 
 
 def dispatch(event, _):
@@ -31,8 +52,10 @@ def dispatch(event, _):
         params = dict(urllib.parse.parse_qsl(body))
         print(params)
         if "text" not in params or not params["text"]:
-            return generate_response("Usage:\n/ai-slop <prompt>\n/ai-slop -i <prompt>")
+            return generate_response(HELP_TEXT)
         prompt = params["text"]
+        if prompt.strip() in ("-h", "--help", "help"):
+            return generate_response(HELP_TEXT)
         user = params["user_name"]
         print("DISPATCH COMMAND: " + prompt + " " + user)
 

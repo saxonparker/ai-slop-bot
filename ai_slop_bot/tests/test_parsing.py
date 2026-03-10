@@ -13,6 +13,7 @@ def test_basic_prompt():
     assert result.display_text == "a basic prompt"
     assert result.prompt_text == "a basic prompt"
     assert result.emoji_mode is False
+    assert result.potato_mode is False
     assert result.backend_override is None
 
 
@@ -84,3 +85,18 @@ def test_image_with_directive():
     assert result.mode == "image"
     assert result.display_text == "a sunset"
     assert result.prompt_text == "a sunset in watercolor style"
+
+
+def test_potato_mode():
+    result = parsing.parse_command("-p what is the meaning of life")
+    assert result.mode == "text"
+    assert result.potato_mode is True
+    assert result.display_text == "what is the meaning of life"
+    assert result.prompt_text == "what is the meaning of life"
+
+
+def test_potato_image_mode():
+    result = parsing.parse_command("-p -i a beautiful sunset")
+    assert result.mode == "image"
+    assert result.potato_mode is True
+    assert result.display_text == "a beautiful sunset"
