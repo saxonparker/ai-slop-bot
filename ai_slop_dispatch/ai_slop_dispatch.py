@@ -25,11 +25,10 @@ def dispatch(event, _):
 
     try:
         print(event)
-        params = dict(
-            urllib.parse.parse_qsl(
-                base64.b64decode(str(event["body"])).decode("ascii")
-            )
-        )
+        body = event["body"]
+        if event.get("isBase64Encoded", False):
+            body = base64.b64decode(body).decode("ascii")
+        params = dict(urllib.parse.parse_qsl(body))
         print(params)
         if "text" not in params or not params["text"]:
             return generate_response("Usage:\n/ai-slop <prompt>\n/ai-slop -i <prompt>")
