@@ -58,6 +58,19 @@ resource "aws_iam_role_policy" "bot_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "bot_dynamodb" {
+  name = "usage-tracking"
+  role = aws_iam_role.bot.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:PutItem", "dynamodb:Query"]
+      Resource = aws_dynamodb_table.usage.arn
+    }]
+  })
+}
+
 # ── Lambda Functions ─────────────────────────────────────────────────────────
 
 resource "aws_lambda_function" "dispatch" {
@@ -89,12 +102,13 @@ resource "aws_lambda_function" "bot" {
 
   environment {
     variables = {
-      TEXT_BACKEND       = var.text_backend
-      IMAGE_BACKEND      = var.image_backend
-      ANTHROPIC_API_KEY  = var.anthropic_api_key
-      GOOGLE_API_KEY     = var.google_api_key
-      OPENAI_API_KEY     = var.openai_api_key
-      OPENAI_ORGANIZATION = var.openai_organization
+      TEXT_BACKEND         = var.text_backend
+      IMAGE_BACKEND        = var.image_backend
+      ANTHROPIC_API_KEY    = var.anthropic_api_key
+      GOOGLE_API_KEY       = var.google_api_key
+      OPENAI_API_KEY       = var.openai_api_key
+      OPENAI_ORGANIZATION  = var.openai_organization
+      USAGE_TABLE_NAME     = aws_dynamodb_table.usage.name
     }
   }
 }

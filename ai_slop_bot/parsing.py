@@ -11,6 +11,7 @@ class ParsedCommand(typing.NamedTuple):
     emoji_mode: bool
     potato_mode: bool
     backend_override: str | None
+    usage: bool
 
 
 def parse_command(input_str: str) -> ParsedCommand:
@@ -22,6 +23,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     image_mode = False
     emoji_mode = False
     potato_mode = False
+    usage_mode = False
     backend_override = None
 
     # Extract flags
@@ -35,6 +37,8 @@ def parse_command(input_str: str) -> ParsedCommand:
             emoji_mode = True
         elif token == "-p":
             potato_mode = True
+        elif token in ("-u", "--usage"):
+            usage_mode = True
         elif token == "-b":
             if i + 1 < len(tokens):
                 i += 1
@@ -59,4 +63,4 @@ def parse_command(input_str: str) -> ParsedCommand:
     prompt_text = text.replace("[", "").replace("]", "")
 
     mode = "image" if image_mode else "text"
-    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override)
+    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode)

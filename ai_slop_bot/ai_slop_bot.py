@@ -9,6 +9,7 @@ import parsing
 import prompts
 import providers
 import slack
+import usage
 
 
 def ai_slop_bot(event, _):
@@ -24,22 +25,29 @@ def ai_slop_bot(event, _):
 
         parsed = parsing.parse_command(input_str)
 
+        if parsed.usage:
+            summary = usage.get_usage_summary(user)
+            slack.post_text_response(response_url, user, "usage stats", summary)
+            return
+
         if parsed.mode == "image":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE IMAGE: {prompt}")
             provider = providers.get_image_provider(parsed.backend_override)
-            image_bytes = provider.generate(prompt)
+            result = provider.generate(prompt)
             print("GENERATE IMAGE COMPLETE")
-            url = image_upload.upload_to_s3(prompt, image_bytes)
+            url = image_upload.upload_to_s3(prompt, result.content)
             print(f"UPLOAD URL {url}")
             slack.post_image_response(response_url, user, parsed.display_text, url)
+            usage.record_usage(user, result)
         else:
             system = prompts.get_system_message(user, parsed.potato_mode)
             print(f"GENERATE TEXT: {system}, {parsed.prompt_text}")
             provider = providers.get_text_provider(parsed.backend_override)
-            response = provider.generate(system, parsed.prompt_text)
-            print(f"GENERATE TEXT COMPLETE: {response}")
-            slack.post_text_response(response_url, user, parsed.display_text, response)
+            result = provider.generate(system, parsed.prompt_text)
+            print(f"GENERATE TEXT COMPLETE: {result.content}")
+            slack.post_text_response(response_url, user, parsed.display_text, result.content)
+            usage.record_usage(user, result)
 
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
@@ -57,19 +65,23 @@ def main():
     print(f"Display: {parsed.display_text}")
     print(f"Prompt: {parsed.prompt_text}")
 
+    if parsed.usage:
+        print(usage.get_usage_summary("cli"))
+        return
+
     if parsed.mode == "image":
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_image_provider(parsed.backend_override)
-        image_bytes = provider.generate(prompt)
+        result = provider.generate(prompt)
         outfile = "/tmp/claude-1000/ai_slop_output.png"
         with open(outfile, "wb") as f:
-            f.write(image_bytes)
+            f.write(result.content)
         print(f"Image saved to {outfile}")
     else:
         system = prompts.get_system_message("cli", parsed.potato_mode)
         provider = providers.get_text_provider(parsed.backend_override)
-        response = provider.generate(system, parsed.prompt_text)
-        print(response)
+        result = provider.generate(system, parsed.prompt_text)
+        print(result.content)
 
 
 if __name__ == "__main__":

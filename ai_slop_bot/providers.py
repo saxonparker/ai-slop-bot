@@ -4,15 +4,17 @@ import importlib
 import os
 from typing import Protocol
 
+from usage import GenerationResult
+
 
 class TextProvider(Protocol):
     """Interface for text generation backends."""
-    def generate(self, system: str, prompt: str) -> str: ...
+    def generate(self, system: str, prompt: str) -> GenerationResult: ...
 
 
 class ImageProvider(Protocol):
     """Interface for image generation backends."""
-    def generate(self, prompt: str) -> bytes: ...
+    def generate(self, prompt: str) -> GenerationResult: ...
 
 
 TEXT_PROVIDERS = {

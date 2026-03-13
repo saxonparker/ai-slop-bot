@@ -15,6 +15,7 @@ def test_basic_prompt():
     assert result.emoji_mode is False
     assert result.potato_mode is False
     assert result.backend_override is None
+    assert result.usage is False
 
 
 def test_directive():
@@ -100,3 +101,20 @@ def test_potato_image_mode():
     assert result.mode == "image"
     assert result.potato_mode is True
     assert result.display_text == "a beautiful sunset"
+
+
+def test_usage_short_flag():
+    result = parsing.parse_command("-u")
+    assert result.usage is True
+    assert result.prompt_text == ""
+
+
+def test_usage_long_flag():
+    result = parsing.parse_command("--usage")
+    assert result.usage is True
+
+
+def test_usage_with_other_flags():
+    result = parsing.parse_command("-i -u a prompt")
+    assert result.usage is True
+    assert result.mode == "image"

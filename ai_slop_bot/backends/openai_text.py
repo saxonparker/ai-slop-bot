@@ -4,6 +4,7 @@ import os
 import re
 
 from openai import OpenAI
+from usage import GenerationResult, estimate_text_cost
 
 
 def clean_response(text: str) -> str:
@@ -19,7 +20,7 @@ def clean_response(text: str) -> str:
 class OpenAIProvider:
     """Text generation using OpenAI ChatGPT."""
 
-    def generate(self, system: str, prompt: str) -> str:
+    def generate(self, system: str, prompt: str) -> GenerationResult:
         client = OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             organization=os.environ["OPENAI_ORGANIZATION"],
@@ -31,4 +32,14 @@ class OpenAIProvider:
         messages.append({"role": "user", "content": prompt})
         response = client.chat.completions.create(model=model, messages=messages)
         reply = response.choices[0].message.content
-        return clean_response(reply)
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        cost = estimate_text_cost("openai", input_tokens, output_tokens)
+        return GenerationResult(
+            content=clean_response(reply),
+            backend="openai",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_estimate=cost,
+        )

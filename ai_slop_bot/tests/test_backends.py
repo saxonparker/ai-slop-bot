@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.append(".")
 
+from usage import GenerationResult
+
 
 # ── Anthropic Text ───────────────────────────────────────────────────────────
 
@@ -17,12 +19,20 @@ def test_anthropic_generate(mock_anthropic_cls):
     mock_anthropic_cls.return_value = mock_client
     mock_block = MagicMock()
     mock_block.text = "Hello from Claude"
-    mock_client.messages.create.return_value = MagicMock(content=[mock_block])
+    mock_message = MagicMock(content=[mock_block])
+    mock_message.usage.input_tokens = 10
+    mock_message.usage.output_tokens = 20
+    mock_client.messages.create.return_value = mock_message
 
     provider = AnthropicProvider()
     result = provider.generate("Be helpful", "What is 2+2?")
 
-    assert result == "Hello from Claude"
+    assert isinstance(result, GenerationResult)
+    assert result.content == "Hello from Claude"
+    assert result.backend == "anthropic"
+    assert result.input_tokens == 10
+    assert result.output_tokens == 20
+    assert result.cost_estimate > 0
     mock_anthropic_cls.assert_called_once_with(api_key="fake-key")
     mock_client.messages.create.assert_called_once()
     call_kwargs = mock_client.messages.create.call_args
@@ -38,10 +48,14 @@ def test_anthropic_respects_model_override(mock_anthropic_cls):
 
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
-    mock_client.messages.create.return_value = MagicMock(content=[MagicMock(text="ok")])
+    mock_message = MagicMock(content=[MagicMock(text="ok")])
+    mock_message.usage.input_tokens = 5
+    mock_message.usage.output_tokens = 5
+    mock_client.messages.create.return_value = mock_message
 
-    AnthropicProvider().generate("sys", "prompt")
+    result = AnthropicProvider().generate("sys", "prompt")
 
+    assert result.model == "claude-opus-4-20250514"
     call_kwargs = mock_client.messages.create.call_args
     assert call_kwargs.kwargs["model"] == "claude-opus-4-20250514"
 
@@ -55,12 +69,19 @@ def test_gemini_text_generate(mock_client_cls):
 
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client
-    mock_client.models.generate_content.return_value = MagicMock(text="Hello from Gemini")
+    mock_response = MagicMock(text="Hello from Gemini")
+    mock_response.usage_metadata.prompt_token_count = 8
+    mock_response.usage_metadata.candidates_token_count = 12
+    mock_client.models.generate_content.return_value = mock_response
 
     provider = GeminiProvider()
     result = provider.generate("Be helpful", "What is 2+2?")
 
-    assert result == "Hello from Gemini"
+    assert isinstance(result, GenerationResult)
+    assert result.content == "Hello from Gemini"
+    assert result.backend == "gemini"
+    assert result.input_tokens == 8
+    assert result.output_tokens == 12
     mock_client_cls.assert_called_once_with(api_key="fake-key")
     call_kwargs = mock_client.models.generate_content.call_args
     assert call_kwargs.kwargs["contents"] == "What is 2+2?"
@@ -78,12 +99,19 @@ def test_openai_text_generate(mock_openai_cls):
     mock_openai_cls.return_value = mock_client
     mock_choice = MagicMock()
     mock_choice.message.content = "Hello from GPT"
-    mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 15
+    mock_response.usage.completion_tokens = 25
+    mock_client.chat.completions.create.return_value = mock_response
 
     provider = OpenAIProvider()
     result = provider.generate("Be helpful", "What is 2+2?")
 
-    assert result == "Hello from GPT"
+    assert isinstance(result, GenerationResult)
+    assert result.content == "Hello from GPT"
+    assert result.backend == "openai"
+    assert result.input_tokens == 15
+    assert result.output_tokens == 25
     mock_openai_cls.assert_called_once_with(api_key="fake-key", organization="fake-org")
     mock_client.chat.completions.create.assert_called_once()
     call_kwargs = mock_client.chat.completions.create.call_args
@@ -102,7 +130,10 @@ def test_openai_text_no_system_when_empty(mock_openai_cls):
     mock_openai_cls.return_value = mock_client
     mock_choice = MagicMock()
     mock_choice.message.content = "response"
-    mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 5
+    mock_response.usage.completion_tokens = 10
+    mock_client.chat.completions.create.return_value = mock_response
 
     OpenAIProvider().generate("", "hello")
 
@@ -119,11 +150,14 @@ def test_openai_text_cleans_ai_disclaimer(mock_openai_cls):
     mock_openai_cls.return_value = mock_client
     mock_choice = MagicMock()
     mock_choice.message.content = "As an AI language model, I cannot do that. Here is the real answer."
-    mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 5
+    mock_response.usage.completion_tokens = 20
+    mock_client.chat.completions.create.return_value = mock_response
 
     result = OpenAIProvider().generate("sys", "prompt")
 
-    assert result == "Here is the real answer."
+    assert result.content == "Here is the real answer."
 
 
 # ── Gemini Image ─────────────────────────────────────────────────────────────
@@ -145,7 +179,10 @@ def test_gemini_image_generate(mock_client_cls):
     provider = GeminiProvider()
     result = provider.generate("a sunset")
 
-    assert result == fake_bytes
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "gemini"
+    assert result.cost_estimate == 0.04
     call_kwargs = mock_client.models.generate_content.call_args
     assert call_kwargs.kwargs["contents"] == ["a sunset"]
 
@@ -188,7 +225,10 @@ def test_openai_image_generate(mock_openai_cls, mock_requests_get):
     provider = OpenAIProvider()
     result = provider.generate("a cat")
 
-    assert result == fake_bytes
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "openai"
+    assert result.cost_estimate == 0.08
     mock_client.images.generate.assert_called_once_with(
         prompt="a cat", n=1, size="1024x1024", model="dall-e-3", quality="hd"
     )

@@ -17,6 +17,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -b <backend> <prompt>` — use a specific backend
+  `/slop-bot -u` — show your usage stats
 
 *Flags can be combined:*
   `/slop-bot -p -i a beautiful sunset` — potato mode image

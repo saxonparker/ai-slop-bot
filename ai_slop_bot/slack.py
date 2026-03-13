@@ -16,7 +16,7 @@ def post_text_response(response_url: str, user: str, display: str, response: str
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f'{user} asked ai-slop: "{display}":',
+                        "text": f'{user} asked slop-bot: "{display}":',
                     },
                 }
             ],

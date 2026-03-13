@@ -4,15 +4,17 @@ import os
 
 from google import genai
 from google.genai import types
+from usage import GenerationResult, COST_PER_IMAGE
 
 
 class GeminiProvider:
     """Image generation using Google Gemini Nano Banana."""
 
-    def generate(self, prompt: str) -> bytes:
+    def generate(self, prompt: str) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+        model = os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image-preview")
         response = client.models.generate_content(
-            model=os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image-preview"),
+            model=model,
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE", "TEXT"],
@@ -30,7 +32,14 @@ class GeminiProvider:
         text_parts = []
         for part in candidate.content.parts:
             if part.inline_data is not None:
-                return part.inline_data.data
+                return GenerationResult(
+                    content=part.inline_data.data,
+                    backend="gemini",
+                    model=model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_estimate=COST_PER_IMAGE["gemini"],
+                )
             if part.text is not None:
                 text_parts.append(part.text)
 
