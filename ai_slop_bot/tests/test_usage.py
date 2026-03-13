@@ -120,47 +120,10 @@ def test_get_usage_summary_formats_output(mock_boto3):
     ]}
 
     result = get_usage_summary("testuser")
-    assert "*Your usage stats:*" in result
-    assert "*Last 7 days:*" in result
-    assert "*All time:*" in result
-    assert "Requests: 3" in result
-
-
-@patch("usage.boto3")
-def test_get_usage_summary_backend_breakdown(mock_boto3):
-    mock_table = MagicMock()
-    mock_boto3.resource.return_value.Table.return_value = mock_table
-
-    now = datetime.now(timezone.utc)
-    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    mock_table.query.return_value = {"Items": [
-        {"timestamp": ts, "backend": "anthropic", "cost_estimate": Decimal("0.05")},
-        {"timestamp": ts, "backend": "gemini", "cost_estimate": Decimal("0.02")},
-    ]}
-
-    result = get_usage_summary("testuser")
-    # Multiple backends should show breakdown
-    assert "anthropic:" in result
-    assert "gemini:" in result
-
-
-@patch("usage.boto3")
-def test_get_usage_summary_single_backend_no_breakdown(mock_boto3):
-    mock_table = MagicMock()
-    mock_boto3.resource.return_value.Table.return_value = mock_table
-
-    now = datetime.now(timezone.utc)
-    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    mock_table.query.return_value = {"Items": [
-        {"timestamp": ts, "backend": "anthropic", "cost_estimate": Decimal("0.05")},
-        {"timestamp": ts, "backend": "anthropic", "cost_estimate": Decimal("0.03")},
-    ]}
-
-    result = get_usage_summary("testuser")
-    # Single backend should NOT show breakdown line
-    assert "anthropic:" not in result
+    assert "*7d:*" in result
+    assert "*All:*" in result
+    assert "3 req" in result
+    assert "$0.17" in result
 
 
 @patch("usage.boto3")

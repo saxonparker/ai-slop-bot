@@ -44,6 +44,23 @@ def post_image_response(response_url: str, user: str, display: str, image_url: s
     )
 
 
+def post_ephemeral(response_url: str, text: str):
+    """Post a message only visible to the requesting user."""
+    requests.post(
+        response_url,
+        data=json.dumps({
+            "response_type": "ephemeral",
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": text},
+                }
+            ],
+        }),
+        timeout=10000,
+    )
+
+
 def post_error(response_url: str, error: str):
     """Post an error message back to Slack."""
     requests.post(

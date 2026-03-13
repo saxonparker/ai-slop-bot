@@ -27,7 +27,7 @@ def ai_slop_bot(event, _):
 
         if parsed.usage:
             summary = usage.get_usage_summary(user)
-            slack.post_text_response(response_url, user, "usage stats", summary)
+            slack.post_ephemeral(response_url, summary)
             return
 
         if parsed.mode == "image":

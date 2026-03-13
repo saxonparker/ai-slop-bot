@@ -87,32 +87,17 @@ def get_usage_summary(user: str) -> str:
     last_7 = [r for r in records if r["timestamp"] >= seven_days_ago]
     this_month = [r for r in records if r["timestamp"].startswith(month_prefix)]
 
-    lines = ["*Your usage stats:*"]
-    lines.append("")
-    lines.append(_format_window("Last 7 days", last_7))
-    lines.append("")
-    lines.append(_format_window(f"This month ({now.strftime('%B')})", this_month))
-    lines.append("")
-    lines.append(_format_window("All time", all_time))
-    return "\n".join(lines)
+    month_name = now.strftime("%b")
+    parts = [
+        _format_window("7d", last_7),
+        _format_window(month_name, this_month),
+        _format_window("All", all_time),
+    ]
+    return " | ".join(parts)
 
 
 def _format_window(label: str, records: list) -> str:
-    """Format a single time window section."""
+    """Format a single time window as a compact inline segment."""
     count = len(records)
     total_cost = sum(float(r.get("cost_estimate", 0)) for r in records)
-    lines = [f"*{label}:*"]
-    lines.append(f"  Requests: {count}  |  Est. cost: ${total_cost:.2f}")
-
-    # Backend breakdown if multiple backends used
-    by_backend: dict[str, list] = {}
-    for r in records:
-        by_backend.setdefault(r["backend"], []).append(r)
-    if len(by_backend) > 1:
-        parts = []
-        for backend, recs in sorted(by_backend.items()):
-            cost = sum(float(r.get("cost_estimate", 0)) for r in recs)
-            parts.append(f"{backend}: {len(recs)} (${cost:.2f})")
-        lines.append("  " + " \u00b7 ".join(parts))
-
-    return "\n".join(lines)
+    return f"*{label}:* {count} req (${total_cost:.2f})"
