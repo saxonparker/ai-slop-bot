@@ -20,7 +20,7 @@ variable "openai_organization" {
 
 variable "text_backend" {
   type    = string
-  default = "anthropic"
+  default = "openai"
 }
 
 variable "image_backend" {
