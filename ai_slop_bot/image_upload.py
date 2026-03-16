@@ -23,6 +23,7 @@ def upload_to_s3(prompt: str, image_bytes: bytes) -> str:
     encoded = urllib.parse.quote(final_file)
     print(f"Final file {final_file}, Encoded url: {encoded}")
 
-    s3_client.upload_fileobj(compressed, "dallepics", f"dalle/{final_file}")
+    s3_client.upload_fileobj(compressed, "dallepics", f"dalle/{final_file}",
+                             ExtraArgs={"ContentType": "image/jpeg"})
     uploaded_url = f"https://d2jagmvo7k5q5j.cloudfront.net/dalle/{encoded}"
     return uploaded_url

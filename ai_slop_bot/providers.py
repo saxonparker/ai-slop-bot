@@ -40,8 +40,8 @@ def _load_provider(registry: dict, name: str):
 
 
 def get_text_provider(override: str | None = None) -> TextProvider:
-    """Get a text provider instance, using override, env var, or default (anthropic)."""
-    backend = override or os.environ.get("TEXT_BACKEND", "anthropic")
+    """Get a text provider instance, using override, env var, or default (openai)."""
+    backend = override or os.environ.get("TEXT_BACKEND", "openai")
     return _load_provider(TEXT_PROVIDERS, backend)
 
 

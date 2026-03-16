@@ -32,12 +32,19 @@ def post_image_response(response_url: str, user: str, display: str, image_url: s
         response_url,
         data=json.dumps({
             "response_type": "in_channel",
-            "attachments": [
+            "blocks": [
                 {
-                    "fallback": display,
-                    "text": f'{user} generated: "{display}"',
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f'{user} generated: "{display}"',
+                    },
+                },
+                {
+                    "type": "image",
                     "image_url": image_url,
-                }
+                    "alt_text": display,
+                },
             ],
         }),
         timeout=10000,
