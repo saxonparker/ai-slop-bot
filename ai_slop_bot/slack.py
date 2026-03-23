@@ -62,12 +62,14 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
     """Upload a video to Slack and post it to the channel."""
     token = os.environ["SLACK_BOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
+    filename = display[:100].replace(" ", "_") + ".mp4"
 
     # Step 1: Request an upload URL
+    print(f"SLACK UPLOAD: requesting upload URL for {len(video_bytes)} bytes")
     resp = requests.post(
         "https://slack.com/api/files.getUploadURLExternal",
         headers=headers,
-        data={"filename": "slop-video.mp4", "length": len(video_bytes)},
+        data={"filename": filename, "length": len(video_bytes)},
         timeout=30,
     )
     resp.raise_for_status()
@@ -76,12 +78,17 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
         raise RuntimeError(f"Slack getUploadURLExternal failed: {data.get('error')}")
     upload_url = data["upload_url"]
     file_id = data["file_id"]
+    print(f"SLACK UPLOAD: got file_id={file_id}")
 
     # Step 2: Upload the file bytes
-    requests.post(upload_url, files={"file": ("slop-video.mp4", video_bytes, "video/mp4")}, timeout=60)
+    upload_resp = requests.post(
+        upload_url, files={"file": (filename, video_bytes, "video/mp4")}, timeout=60,
+    )
+    upload_resp.raise_for_status()
+    print("SLACK UPLOAD: file uploaded")
 
     # Step 3: Complete the upload and share to channel
-    requests.post(
+    complete_resp = requests.post(
         "https://slack.com/api/files.completeUploadExternal",
         headers={**headers, "Content-Type": "application/json"},
         json={
@@ -91,6 +98,10 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
         },
         timeout=30,
     )
+    complete_data = complete_resp.json()
+    if not complete_data.get("ok"):
+        raise RuntimeError(f"Slack completeUploadExternal failed: {complete_data.get('error')}")
+    print(f"SLACK UPLOAD: shared to channel {channel_id}")
 
 
 def post_ephemeral(response_url: str, text: str):
