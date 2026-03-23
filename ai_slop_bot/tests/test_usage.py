@@ -26,8 +26,8 @@ def test_estimate_text_cost_openai():
 
 def test_estimate_text_cost_gemini():
     cost = estimate_text_cost("gemini", 1000, 1000)
-    # 1000 * 0.15/1M + 1000 * 0.60/1M = 0.00015 + 0.0006 = 0.00075
-    assert abs(cost - 0.00075) < 1e-9
+    # 1000 * 0.50/1M + 1000 * 3.00/1M = 0.0005 + 0.003 = 0.0035
+    assert abs(cost - 0.0035) < 1e-9
 
 
 def test_estimate_text_cost_unknown_backend():
