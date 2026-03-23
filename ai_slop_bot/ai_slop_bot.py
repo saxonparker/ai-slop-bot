@@ -4,6 +4,7 @@ import json
 import sys
 import traceback
 
+import budget
 import image_upload
 import parsing
 import prompts
@@ -28,7 +29,33 @@ def ai_slop_bot(event, _):
 
         if parsed.usage:
             summary = usage.get_usage_summary(user)
-            slack.post_ephemeral(response_url, summary)
+            balance_info = budget.get_balance_display(user)
+            slack.post_ephemeral(response_url, summary + "\n" + balance_info)
+            return
+
+        if parsed.pay_amount is not None:
+            amount = parsed.pay_amount
+            budget.add_credit(user, amount, source_user=user, note="Venmo payment")
+            link = budget.generate_venmo_link(amount)
+            slack.post_ephemeral(
+                response_url,
+                f":white_check_mark: Credited *${amount:.2f}* to your balance.\n"
+                f"Pay here: <{link}|Pay ${amount:.2f} on Venmo>",
+            )
+            return
+
+        if parsed.credit_target is not None:
+            if user not in budget.ADMIN_USERS:
+                slack.post_ephemeral(response_url, "Only admins can use -credit.")
+                return
+            target = parsed.credit_target
+            amount = parsed.credit_amount
+            new_bal = budget.add_credit(target, amount, source_user=user,
+                                        note="Admin adjustment")
+            slack.post_ephemeral(
+                response_url,
+                f"Adjusted *{target}* by *${amount:.2f}*. New balance: *${new_bal:.2f}*",
+            )
             return
 
         if parsed.mode == "video":

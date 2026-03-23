@@ -110,6 +110,22 @@ def get_usage_summary(user: str) -> str:
     return " | ".join(parts)
 
 
+def get_total_cost(user: str) -> float:
+    """Return the sum of all cost_estimate values for a user."""
+    try:
+        table = _get_table()
+        response = table.query(
+            KeyConditionExpression="#u = :user",
+            ExpressionAttributeNames={"#u": "user"},
+            ExpressionAttributeValues={":user": user},
+            ProjectionExpression="cost_estimate",
+        )
+        return sum(float(r.get("cost_estimate", 0)) for r in response.get("Items", []))
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"USAGE QUERY ERROR: {exc}")
+        return 0.0
+
+
 def _format_window(label: str, records: list) -> str:
     """Format a single time window as a compact inline segment."""
     count = len(records)

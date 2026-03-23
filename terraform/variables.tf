@@ -54,3 +54,14 @@ variable "dispatch_zip_path" {
   description = "Path to the ai_slop_dispatch.zip Lambda package"
   default     = "../ai_slop_dispatch/ai_slop_dispatch.zip"
 }
+
+variable "venmo_username" {
+  type    = string
+  default = "Saxon-Parker"
+}
+
+variable "admin_users" {
+  type        = string
+  description = "Comma-separated list of Slack usernames allowed to use -credit"
+  default     = "saxon"
+}

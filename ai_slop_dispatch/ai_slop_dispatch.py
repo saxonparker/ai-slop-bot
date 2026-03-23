@@ -14,11 +14,12 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Usage:*
   `/slop-bot <prompt>` — text response
   `/slop-bot -i <prompt>` — image generation
-  `/slop-bot -v <prompt>` — video generation
+  `/slop-bot -v [seconds] <prompt>` — video generation (default 10s, max 15s)
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -b <backend> <prompt>` — use a specific backend
-  `/slop-bot -u` — show your usage stats
+  `/slop-bot -u` — show your usage stats and balance
+  `/slop-bot -pay <amount>` — add credits and get a Venmo payment link
 
 *Flags can be combined:*
   `/slop-bot -p -i a beautiful sunset` — potato mode image

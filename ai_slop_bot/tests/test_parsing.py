@@ -148,3 +148,48 @@ def test_usage_with_other_flags():
     result = parsing.parse_command("-i -u a prompt")
     assert result.usage is True
     assert result.mode == "image"
+
+
+# ── Pay flag ────────────────────────────────────────────────────────────────
+
+def test_pay_amount():
+    result = parsing.parse_command("-pay 5.00")
+    assert result.pay_amount == 5.00
+    assert result.prompt_text == ""
+
+
+def test_pay_amount_integer():
+    result = parsing.parse_command("-pay 10")
+    assert result.pay_amount == 10.0
+
+
+def test_pay_with_other_flags():
+    result = parsing.parse_command("-pay 3.50 -u")
+    assert result.pay_amount == 3.50
+    assert result.usage is True
+
+
+def test_pay_invalid_amount():
+    result = parsing.parse_command("-pay notanumber")
+    assert result.pay_amount is None
+    assert "notanumber" in result.prompt_text
+
+
+# ── Credit flag ─────────────────────────────────────────────────────────────
+
+def test_credit_user_amount():
+    result = parsing.parse_command("-credit testuser 5.00")
+    assert result.credit_target == "testuser"
+    assert result.credit_amount == 5.00
+
+
+def test_credit_negative_adjustment():
+    result = parsing.parse_command("-credit testuser -2.50")
+    assert result.credit_target == "testuser"
+    assert result.credit_amount == -2.50
+
+
+def test_credit_invalid_amount():
+    result = parsing.parse_command("-credit testuser notanumber")
+    assert result.credit_target is None
+    assert result.credit_amount is None

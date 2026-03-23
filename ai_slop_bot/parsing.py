@@ -13,6 +13,9 @@ class ParsedCommand(typing.NamedTuple):
     backend_override: str | None
     usage: bool
     video_duration: int | None
+    pay_amount: float | None = None
+    credit_target: str | None = None
+    credit_amount: float | None = None
 
 
 def parse_command(input_str: str) -> ParsedCommand:
@@ -28,6 +31,9 @@ def parse_command(input_str: str) -> ParsedCommand:
     potato_mode = False
     usage_mode = False
     backend_override = None
+    pay_amount = None
+    credit_target = None
+    credit_amount = None
 
     # Extract flags
     prompt_tokens = []
@@ -51,6 +57,26 @@ def parse_command(input_str: str) -> ParsedCommand:
             if i + 1 < len(tokens):
                 i += 1
                 backend_override = tokens[i]
+        elif token in ("-pay", "--pay"):
+            if i + 1 < len(tokens):
+                i += 1
+                try:
+                    pay_amount = float(tokens[i])
+                except ValueError:
+                    prompt_tokens.append(token)
+                    prompt_tokens.append(tokens[i])
+        elif token in ("-credit", "--credit"):
+            if i + 2 < len(tokens):
+                i += 1
+                credit_target = tokens[i]
+                i += 1
+                try:
+                    credit_amount = float(tokens[i])
+                except ValueError:
+                    prompt_tokens.append(token)
+                    prompt_tokens.append(credit_target)
+                    prompt_tokens.append(tokens[i])
+                    credit_target = None
         else:
             prompt_tokens.append(token)
         i += 1
@@ -71,4 +97,4 @@ def parse_command(input_str: str) -> ParsedCommand:
     prompt_text = text.replace("[", "").replace("]", "")
 
     mode = "video" if video_mode else "image" if image_mode else "text"
-    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode, video_duration)
+    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode, video_duration, pay_amount, credit_target, credit_amount)

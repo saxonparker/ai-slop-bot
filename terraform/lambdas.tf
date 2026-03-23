@@ -66,7 +66,10 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["dynamodb:PutItem", "dynamodb:Query"]
-      Resource = aws_dynamodb_table.usage.arn
+      Resource = [
+        aws_dynamodb_table.usage.arn,
+        aws_dynamodb_table.ledger.arn,
+      ]
     }]
   })
 }
@@ -112,6 +115,9 @@ resource "aws_lambda_function" "bot" {
       XAI_API_KEY          = var.xai_api_key
       SLACK_BOT_TOKEN      = var.slack_bot_token
       USAGE_TABLE_NAME     = aws_dynamodb_table.usage.name
+      LEDGER_TABLE_NAME    = aws_dynamodb_table.ledger.name
+      VENMO_USERNAME       = var.venmo_username
+      ADMIN_USERS          = var.admin_users
     }
   }
 }
