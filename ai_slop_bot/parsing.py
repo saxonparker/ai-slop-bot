@@ -5,7 +5,7 @@ import typing
 
 class ParsedCommand(typing.NamedTuple):
     """Result of parsing an /ai-slop command string."""
-    mode: str  # "text" or "image"
+    mode: str  # "text", "image", or "video"
     display_text: str
     prompt_text: str
     emoji_mode: bool
@@ -21,6 +21,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     """
     tokens = input_str.split()
     image_mode = False
+    video_mode = False
     emoji_mode = False
     potato_mode = False
     usage_mode = False
@@ -33,6 +34,8 @@ def parse_command(input_str: str) -> ParsedCommand:
         token = tokens[i]
         if token == "-i":
             image_mode = True
+        elif token == "-v":
+            video_mode = True
         elif token == "-e":
             emoji_mode = True
         elif token == "-p":
@@ -62,5 +65,5 @@ def parse_command(input_str: str) -> ParsedCommand:
 
     prompt_text = text.replace("[", "").replace("]", "")
 
-    mode = "image" if image_mode else "text"
+    mode = "video" if video_mode else "image" if image_mode else "text"
     return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode)

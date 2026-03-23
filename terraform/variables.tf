@@ -18,6 +18,11 @@ variable "openai_organization" {
   sensitive = true
 }
 
+variable "xai_api_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "text_backend" {
   type    = string
   default = "gemini"
@@ -26,6 +31,11 @@ variable "text_backend" {
 variable "image_backend" {
   type    = string
   default = "gemini"
+}
+
+variable "video_backend" {
+  type    = string
+  default = "grok"
 }
 
 variable "bot_zip_path" {

@@ -22,17 +22,23 @@ COST_PER_MILLION_TOKENS = {
     "anthropic": {"input": 3.00, "output": 15.00},
     "openai_text": {"input": 5.00, "output": 15.00},
     "gemini_text": {"input": 0.50, "output": 3.00},
+    "grok_text": {"input": 0.20, "output": 0.50},
+}
+
+COST_PER_VIDEO = {
+    "grok": 0.05,  # per second of video
 }
 
 COST_PER_IMAGE = {
     "gemini": 0.04,
     "openai": 0.08,
+    "grok": 0.02,
 }
 
 
 def estimate_text_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
     """Estimate cost for a text generation request."""
-    key = f"{backend}_text" if backend in ("openai", "gemini") else backend
+    key = f"{backend}_text" if backend in ("openai", "gemini", "grok") else backend
     rates = COST_PER_MILLION_TOKENS.get(key, {"input": 0.0, "output": 0.0})
     return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
 
@@ -43,10 +49,18 @@ def _get_table():
     return boto3.resource("dynamodb").Table(table_name)
 
 
+VIDEO_MODELS = {"grok-imagine-video"}
+
+
 def record_usage(user: str, result: GenerationResult):
     """Write a usage record to DynamoDB. Failures are logged but never propagated."""
     try:
-        mode = "image" if isinstance(result.content, bytes) else "text"
+        if result.model in VIDEO_MODELS:
+            mode = "video"
+        elif isinstance(result.content, bytes):
+            mode = "image"
+        else:
+            mode = "text"
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         _get_table().put_item(Item={
             "user": user,

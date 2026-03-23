@@ -57,6 +57,33 @@ def post_image_response(response_url: str, user: str, display: str, image_url: s
     )
 
 
+def post_video_response(response_url: str, user: str, display: str, video_url: str):
+    """Post a video response back to Slack."""
+    requests.post(
+        response_url,
+        data=json.dumps({
+            "response_type": "in_channel",
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f'{user} generated video: "{display}"',
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"<{video_url}|View video>",
+                    },
+                },
+            ],
+        }),
+        timeout=10000,
+    )
+
+
 def post_ephemeral(response_url: str, text: str):
     """Post a message only visible to the requesting user."""
     requests.post(

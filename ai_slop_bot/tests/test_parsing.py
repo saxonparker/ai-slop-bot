@@ -103,6 +103,19 @@ def test_potato_image_mode():
     assert result.display_text == "a beautiful sunset"
 
 
+def test_video_mode():
+    result = parsing.parse_command("-v a dancing cat")
+    assert result.mode == "video"
+    assert result.display_text == "a dancing cat"
+    assert result.prompt_text == "a dancing cat"
+
+
+def test_video_with_backend():
+    result = parsing.parse_command("-v -b grok a dancing cat")
+    assert result.mode == "video"
+    assert result.backend_override == "grok"
+
+
 def test_usage_short_flag():
     result = parsing.parse_command("-u")
     assert result.usage is True

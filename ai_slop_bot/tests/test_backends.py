@@ -233,3 +233,147 @@ def test_openai_image_generate(mock_openai_cls, mock_requests_get):
         prompt="a cat", n=1, size="1024x1024", model="dall-e-3", quality="hd"
     )
     mock_requests_get.assert_called_once_with("https://fake-url.com/image.png", timeout=10000)
+
+
+# ── Grok Text ───────────────────────────────────────────────────────────────
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_text.OpenAI")
+def test_grok_text_generate(mock_openai_cls):
+    from backends.grok_text import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Hello from Grok"
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 12
+    mock_response.usage.completion_tokens = 18
+    mock_client.chat.completions.create.return_value = mock_response
+
+    provider = GrokProvider()
+    result = provider.generate("Be helpful", "What is 2+2?")
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == "Hello from Grok"
+    assert result.backend == "grok"
+    assert result.input_tokens == 12
+    assert result.output_tokens == 18
+    assert result.cost_estimate > 0
+    mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
+    call_kwargs = mock_client.chat.completions.create.call_args
+    assert call_kwargs.kwargs["messages"] == [
+        {"role": "system", "content": "Be helpful"},
+        {"role": "user", "content": "What is 2+2?"},
+    ]
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_text.OpenAI")
+def test_grok_text_no_system_when_empty(mock_openai_cls):
+    from backends.grok_text import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_choice = MagicMock()
+    mock_choice.message.content = "response"
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 5
+    mock_response.usage.completion_tokens = 10
+    mock_client.chat.completions.create.return_value = mock_response
+
+    GrokProvider().generate("", "hello")
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    assert call_kwargs.kwargs["messages"] == [{"role": "user", "content": "hello"}]
+
+
+# ── Grok Image ──────────────────────────────────────────────────────────────
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_image.requests.get")
+@patch("backends.grok_image.OpenAI")
+def test_grok_image_generate(mock_openai_cls, mock_requests_get):
+    from backends.grok_image import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_client.images.generate.return_value = MagicMock(
+        data=[MagicMock(url="https://fake-url.com/grok-image.png")]
+    )
+    fake_bytes = b"\x89PNG fake grok image"
+    mock_requests_get.return_value = MagicMock(content=fake_bytes)
+
+    provider = GrokProvider()
+    result = provider.generate("a cat")
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "grok"
+    assert result.cost_estimate == 0.02
+    mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
+    mock_client.images.generate.assert_called_once_with(
+        prompt="a cat", n=1, model="grok-imagine-image"
+    )
+    mock_requests_get.assert_called_once_with("https://fake-url.com/grok-image.png", timeout=10000)
+
+
+# ── Grok Video ──────────────────────────────────────────────────────────────
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_generate(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    # Mock the POST to submit generation
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-123"}
+    mock_submit.raise_for_status = MagicMock()
+
+    # Mock the GET to poll status
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 8},
+        "model": "grok-imagine-video",
+    }
+    mock_status.raise_for_status = MagicMock()
+
+    # Mock the GET to download video
+    fake_bytes = b"\x00\x00\x00\x1cftypisom"
+    mock_download = MagicMock(content=fake_bytes)
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, mock_download]
+
+    provider = GrokProvider()
+    with patch("backends.grok_video.time.sleep"):
+        result = provider.generate("a dancing cat")
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "grok"
+    assert result.model == "grok-imagine-video"
+    assert result.cost_estimate == 8 * 0.05
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_failed_raises(mock_requests):
+    from backends.grok_video import GrokProvider
+    import pytest
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-456"}
+    mock_submit.raise_for_status = MagicMock()
+
+    mock_status = MagicMock()
+    mock_status.json.return_value = {"status": "failed"}
+    mock_status.raise_for_status = MagicMock()
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.return_value = mock_status
+
+    with patch("backends.grok_video.time.sleep"):
+        with pytest.raises(RuntimeError, match="Video generation failed"):
+            GrokProvider().generate("a dancing cat")

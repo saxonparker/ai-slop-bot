@@ -95,7 +95,7 @@ resource "aws_lambda_function" "bot" {
   role             = aws_iam_role.bot.arn
   handler          = "ai_slop_bot.ai_slop_bot"
   runtime          = "python3.12"
-  timeout          = 120
+  timeout          = 300
   memory_size      = 512
   filename         = var.bot_zip_path
   source_code_hash = filebase64sha256(var.bot_zip_path)
@@ -104,10 +104,12 @@ resource "aws_lambda_function" "bot" {
     variables = {
       TEXT_BACKEND         = var.text_backend
       IMAGE_BACKEND        = var.image_backend
+      VIDEO_BACKEND        = var.video_backend
       ANTHROPIC_API_KEY    = var.anthropic_api_key
       GOOGLE_API_KEY       = var.google_api_key
       OPENAI_API_KEY       = var.openai_api_key
       OPENAI_ORGANIZATION  = var.openai_organization
+      XAI_API_KEY          = var.xai_api_key
       USAGE_TABLE_NAME     = aws_dynamodb_table.usage.name
     }
   }

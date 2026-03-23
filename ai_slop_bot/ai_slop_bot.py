@@ -30,7 +30,17 @@ def ai_slop_bot(event, _):
             slack.post_ephemeral(response_url, summary)
             return
 
-        if parsed.mode == "image":
+        if parsed.mode == "video":
+            prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
+            print(f"GENERATE VIDEO: {prompt}")
+            provider = providers.get_video_provider(parsed.backend_override)
+            result = provider.generate(prompt)
+            print("GENERATE VIDEO COMPLETE")
+            url = image_upload.upload_to_s3(prompt, result.content, extension="mp4")
+            print(f"UPLOAD URL {url}")
+            slack.post_video_response(response_url, user, parsed.display_text, url)
+            usage.record_usage(user, result)
+        elif parsed.mode == "image":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE IMAGE: {prompt}")
             provider = providers.get_image_provider(parsed.backend_override)
@@ -69,7 +79,15 @@ def main():
         print(usage.get_usage_summary("cli"))
         return
 
-    if parsed.mode == "image":
+    if parsed.mode == "video":
+        prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
+        provider = providers.get_video_provider(parsed.backend_override)
+        result = provider.generate(prompt)
+        outfile = "/tmp/claude-1000/ai_slop_output.mp4"
+        with open(outfile, "wb") as f:
+            f.write(result.content)
+        print(f"Video saved to {outfile}")
+    elif parsed.mode == "image":
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_image_provider(parsed.backend_override)
         result = provider.generate(prompt)

@@ -30,6 +30,12 @@ def test_estimate_text_cost_gemini():
     assert abs(cost - 0.0035) < 1e-9
 
 
+def test_estimate_text_cost_grok():
+    cost = estimate_text_cost("grok", 1000, 1000)
+    # 1000 * 0.20/1M + 1000 * 0.50/1M = 0.0002 + 0.0005 = 0.0007
+    assert abs(cost - 0.0007) < 1e-9
+
+
 def test_estimate_text_cost_unknown_backend():
     cost = estimate_text_cost("unknown", 1000, 1000)
     assert cost == 0.0
@@ -81,6 +87,18 @@ def test_record_usage_image_mode(mock_boto3):
 
     item = mock_table.put_item.call_args.kwargs["Item"]
     assert item["mode"] == "image"
+
+
+@patch("usage.boto3")
+def test_record_usage_video_mode(mock_boto3):
+    mock_table = MagicMock()
+    mock_boto3.resource.return_value.Table.return_value = mock_table
+
+    result = GenerationResult(b"\x00\x00\x00\x1cftypisom", "grok", "grok-imagine-video", 0, 0, 0.40)
+    record_usage("testuser", result)
+
+    item = mock_table.put_item.call_args.kwargs["Item"]
+    assert item["mode"] == "video"
 
 
 @patch("usage.boto3")
