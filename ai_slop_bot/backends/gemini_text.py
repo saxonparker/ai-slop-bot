@@ -11,7 +11,7 @@ class GeminiProvider:
 
     def generate(self, system: str, prompt: str) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("TEXT_MODEL", "gemini-2.5-flash")
+        model = os.environ.get("TEXT_MODEL", "gemini-3-flash-preview")
         response = client.models.generate_content(
             model=model,
             contents=prompt,

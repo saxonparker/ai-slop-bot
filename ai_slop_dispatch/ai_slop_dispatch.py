@@ -27,7 +27,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
 
 *Backends:*
-  Text: `anthropic` (default), `gemini`, `openai`
+  Text: `gemini` (default), `anthropic`, `openai`
   Image: `gemini` (default), `openai`"""
 
 

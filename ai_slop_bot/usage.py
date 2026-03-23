@@ -21,7 +21,7 @@ class GenerationResult(typing.NamedTuple):
 COST_PER_MILLION_TOKENS = {
     "anthropic": {"input": 3.00, "output": 15.00},
     "openai_text": {"input": 5.00, "output": 15.00},
-    "gemini_text": {"input": 0.15, "output": 0.60},
+    "gemini_text": {"input": 0.50, "output": 3.00},
 }
 
 COST_PER_IMAGE = {
