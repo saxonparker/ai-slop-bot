@@ -108,11 +108,28 @@ def test_video_mode():
     assert result.mode == "video"
     assert result.display_text == "a dancing cat"
     assert result.prompt_text == "a dancing cat"
+    assert result.video_duration is None
+
+
+def test_video_with_duration():
+    result = parsing.parse_command("-v 5 a dancing cat")
+    assert result.mode == "video"
+    assert result.video_duration == 5
+    assert result.display_text == "a dancing cat"
+    assert result.prompt_text == "a dancing cat"
 
 
 def test_video_with_backend():
     result = parsing.parse_command("-v -b grok a dancing cat")
     assert result.mode == "video"
+    assert result.backend_override == "grok"
+    assert result.video_duration is None
+
+
+def test_video_with_duration_and_backend():
+    result = parsing.parse_command("-v 15 -b grok a dancing cat")
+    assert result.mode == "video"
+    assert result.video_duration == 15
     assert result.backend_override == "grok"
 
 

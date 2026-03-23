@@ -355,6 +355,40 @@ def test_grok_video_generate(mock_requests):
     assert result.backend == "grok"
     assert result.model == "grok-imagine-video"
     assert result.cost_estimate == 8 * 0.05
+    # Default duration (10) should be sent in request
+    post_kwargs = mock_requests.post.call_args
+    assert post_kwargs.kwargs["json"]["duration"] == 10
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_custom_duration(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-789"}
+    mock_submit.raise_for_status = MagicMock()
+
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 5},
+        "model": "grok-imagine-video",
+    }
+    mock_status.raise_for_status = MagicMock()
+
+    fake_bytes = b"\x00\x00\x00\x1cftypisom"
+    mock_download = MagicMock(content=fake_bytes)
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, mock_download]
+
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate("a dancing cat", duration=5)
+
+    assert result.cost_estimate == 5 * 0.05
+    post_kwargs = mock_requests.post.call_args
+    assert post_kwargs.kwargs["json"]["duration"] == 5
 
 
 @patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})

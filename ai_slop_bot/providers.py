@@ -19,7 +19,7 @@ class ImageProvider(Protocol):
 
 class VideoProvider(Protocol):
     """Interface for video generation backends."""
-    def generate(self, prompt: str) -> GenerationResult: ...
+    def generate(self, prompt: str, duration: int | None = None) -> GenerationResult: ...
 
 
 TEXT_PROVIDERS = {

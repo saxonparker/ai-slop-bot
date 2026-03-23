@@ -22,6 +22,7 @@ def ai_slop_bot(event, _):
         response_url = message["response_url"]
         input_str = message["prompt"]
         user = message["user"]
+        channel_id = message.get("channel_id", "")
 
         parsed = parsing.parse_command(input_str)
 
@@ -34,11 +35,9 @@ def ai_slop_bot(event, _):
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE VIDEO: {prompt}")
             provider = providers.get_video_provider(parsed.backend_override)
-            result = provider.generate(prompt)
+            result = provider.generate(prompt, duration=parsed.video_duration)
             print("GENERATE VIDEO COMPLETE")
-            url = image_upload.upload_to_s3(prompt, result.content, extension="mp4")
-            print(f"UPLOAD URL {url}")
-            slack.post_video_response(response_url, user, parsed.display_text, url)
+            slack.post_video_response(channel_id, user, parsed.display_text, result.content)
             usage.record_usage(user, result)
         elif parsed.mode == "image":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
@@ -82,7 +81,7 @@ def main():
     if parsed.mode == "video":
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_video_provider(parsed.backend_override)
-        result = provider.generate(prompt)
+        result = provider.generate(prompt, duration=parsed.video_duration)
         outfile = "/tmp/claude-1000/ai_slop_output.mp4"
         with open(outfile, "wb") as f:
             f.write(result.content)

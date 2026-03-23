@@ -110,6 +110,7 @@ resource "aws_lambda_function" "bot" {
       OPENAI_API_KEY       = var.openai_api_key
       OPENAI_ORGANIZATION  = var.openai_organization
       XAI_API_KEY          = var.xai_api_key
+      SLACK_BOT_TOKEN      = var.slack_bot_token
       USAGE_TABLE_NAME     = aws_dynamodb_table.usage.name
     }
   }

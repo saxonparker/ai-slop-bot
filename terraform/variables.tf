@@ -23,6 +23,11 @@ variable "xai_api_key" {
   sensitive = true
 }
 
+variable "slack_bot_token" {
+  type      = string
+  sensitive = true
+}
+
 variable "text_backend" {
   type    = string
   default = "gemini"

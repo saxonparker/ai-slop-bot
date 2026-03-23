@@ -14,6 +14,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Usage:*
   `/slop-bot <prompt>` — text response
   `/slop-bot -i <prompt>` — image generation
+  `/slop-bot -v <prompt>` — video generation
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -b <backend> <prompt>` — use a specific backend
@@ -27,8 +28,9 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
 
 *Backends:*
-  Text: `gemini` (default), `anthropic`, `openai`
-  Image: `gemini` (default), `openai`"""
+  Text: `gemini` (default), `anthropic`, `openai`, `grok`
+  Image: `gemini` (default), `openai`, `grok`
+  Video: `grok` (default)"""
 
 
 def dispatch(event, _):
@@ -62,6 +64,7 @@ def dispatch(event, _):
 
         message = {
             "response_url": params["response_url"],
+            "channel_id": params.get("channel_id", ""),
             "prompt": prompt,
             "user": user,
         }

@@ -15,9 +15,10 @@ MAX_POLL_ATTEMPTS = 120
 class GrokProvider:
     """Video generation using xAI Grok."""
 
-    def generate(self, prompt: str) -> GenerationResult:
+    def generate(self, prompt: str, duration: int | None = None) -> GenerationResult:
         api_key = os.environ["XAI_API_KEY"]
         model = os.environ.get("VIDEO_MODEL", "grok-imagine-video")
+        duration = duration or int(os.environ.get("VIDEO_DURATION", "10"))
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
@@ -27,7 +28,7 @@ class GrokProvider:
         resp = requests.post(
             f"{BASE_URL}/videos/generations",
             headers=headers,
-            json={"model": model, "prompt": prompt},
+            json={"model": model, "prompt": prompt, "duration": duration},
             timeout=30,
         )
         resp.raise_for_status()
