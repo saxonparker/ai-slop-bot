@@ -40,24 +40,25 @@ def parse_command(input_str: str) -> ParsedCommand:
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        if token == "-i":
+        lower = token.lower()
+        if lower == "-i":
             image_mode = True
-        elif token == "-v":
+        elif lower == "-v":
             video_mode = True
             if i + 1 < len(tokens) and tokens[i + 1].isdigit():
                 i += 1
                 video_duration = int(tokens[i])
-        elif token == "-e":
+        elif lower == "-e":
             emoji_mode = True
-        elif token == "-p":
+        elif lower == "-p":
             potato_mode = True
-        elif token in ("-u", "--usage"):
+        elif lower in ("-u", "--usage"):
             usage_mode = True
-        elif token == "-b":
+        elif lower == "-b":
             if i + 1 < len(tokens):
                 i += 1
-                backend_override = tokens[i]
-        elif token in ("-pay", "--pay"):
+                backend_override = tokens[i].lower()
+        elif lower in ("-pay", "--pay"):
             if i + 1 < len(tokens):
                 i += 1
                 try:
@@ -65,7 +66,7 @@ def parse_command(input_str: str) -> ParsedCommand:
                 except ValueError:
                     prompt_tokens.append(token)
                     prompt_tokens.append(tokens[i])
-        elif token in ("-credit", "--credit"):
+        elif lower in ("-credit", "--credit"):
             if i + 2 < len(tokens):
                 i += 1
                 credit_target = tokens[i]

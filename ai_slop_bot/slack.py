@@ -20,14 +20,8 @@ def post_text_response(response_url: str, user: str, display: str, response: str
                         "text": f'{user} asked slop-bot: "{display}":',
                     },
                 },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": response,
-                    },
-                },
             ],
+            "attachments": [{"text": response}],
         }),
         timeout=10000,
     )
