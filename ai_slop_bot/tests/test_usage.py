@@ -132,16 +132,24 @@ def test_get_usage_summary_formats_output(mock_boto3):
     old_ts = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     mock_table.query.return_value = {"Items": [
-        {"timestamp": recent_ts, "backend": "anthropic", "cost_estimate": Decimal("0.05")},
-        {"timestamp": recent_ts, "backend": "gemini", "cost_estimate": Decimal("0.02")},
-        {"timestamp": old_ts, "backend": "anthropic", "cost_estimate": Decimal("0.10")},
+        {"timestamp": recent_ts, "mode": "text", "backend": "anthropic", "cost_estimate": Decimal("0.05")},
+        {"timestamp": recent_ts, "mode": "image", "backend": "gemini", "cost_estimate": Decimal("0.02")},
+        {"timestamp": old_ts, "mode": "text", "backend": "anthropic", "cost_estimate": Decimal("0.10")},
     ]}
 
     result = get_usage_summary("testuser")
-    assert "*7d:*" in result
-    assert "*All:*" in result
-    assert "3 req" in result
-    assert "$0.17" in result
+    assert isinstance(result, list)
+    assert len(result) == 3
+    # Each entry is a Slack section block
+    texts = [b["text"]["text"] for b in result]
+    assert any("Last 7 days" in t for t in texts)
+    assert any("All time" in t for t in texts)
+    assert any("3 requests" in t for t in texts)
+    assert any("$0.17" in t for t in texts)
+    # Verify per-mode breakdown is present
+    all_text = "\n".join(texts)
+    assert "Text:" in all_text
+    assert "Image:" in all_text
 
 
 @patch("usage.boto3")

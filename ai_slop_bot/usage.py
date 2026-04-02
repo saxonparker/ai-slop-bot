@@ -76,8 +76,8 @@ def record_usage(user: str, result: GenerationResult):
         print(f"USAGE RECORD ERROR: {exc}")
 
 
-def get_usage_summary(user: str) -> str:
-    """Query all usage records for a user and return a formatted Slack mrkdwn summary."""
+def get_usage_summary(user: str) -> list[dict] | str:
+    """Query all usage records for a user and return Slack blocks (or a plain string on error)."""
     try:
         table = _get_table()
         response = table.query(
@@ -102,12 +102,11 @@ def get_usage_summary(user: str) -> str:
     this_month = [r for r in records if r["timestamp"].startswith(month_prefix)]
 
     month_name = now.strftime("%b")
-    parts = [
-        _format_window("7d", last_7),
-        _format_window(month_name, this_month),
-        _format_window("All", all_time),
+    return [
+        _format_block("Last 7 days", last_7),
+        _format_block(month_name, this_month),
+        _format_block("All time", all_time),
     ]
-    return " | ".join(parts)
 
 
 def get_total_cost(user: str) -> float:
@@ -126,8 +125,22 @@ def get_total_cost(user: str) -> float:
         return 0.0
 
 
-def _format_window(label: str, records: list) -> str:
-    """Format a single time window as a compact inline segment."""
+def _format_block(label: str, records: list) -> dict:
+    """Format a single time window as a Slack section block."""
     count = len(records)
     total_cost = sum(float(r.get("cost_estimate", 0)) for r in records)
-    return f"*{label}:* {count} req (${total_cost:.2f})"
+    by_mode = {}
+    for r in records:
+        mode = r.get("mode", "text")
+        by_mode.setdefault(mode, {"count": 0, "cost": 0.0})
+        by_mode[mode]["count"] += 1
+        by_mode[mode]["cost"] += float(r.get("cost_estimate", 0))
+    MODE_LABELS = {"text": "Text", "image": "Image", "video": "Video"}
+    breakdown = "\n".join(
+        f"  _{MODE_LABELS.get(m, m)}:_ {s['count']} req — ${s['cost']:.2f}"
+        for m, s in sorted(by_mode.items())
+    )
+    text = f"*{label}:* {count} requests — ${total_cost:.2f}"
+    if breakdown:
+        text += f"\n{breakdown}"
+    return {"type": "section", "text": {"type": "mrkdwn", "text": text}}

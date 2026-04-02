@@ -98,21 +98,14 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
     print(f"SLACK UPLOAD: shared to channel {channel_id}")
 
 
-def post_ephemeral(response_url: str, text: str):
+def post_ephemeral(response_url: str, text: str = "", blocks: list[dict] | None = None):
     """Post a message only visible to the requesting user."""
-    requests.post(
-        response_url,
-        data=json.dumps({
-            "response_type": "ephemeral",
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": text},
-                }
-            ],
-        }),
-        timeout=10000,
-    )
+    if blocks is None:
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    payload = {"response_type": "ephemeral", "blocks": blocks}
+    if text:
+        payload["text"] = text
+    requests.post(response_url, data=json.dumps(payload), timeout=10000)
 
 
 def post_error(response_url: str, error: str):

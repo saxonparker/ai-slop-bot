@@ -30,7 +30,11 @@ def ai_slop_bot(event, _):
         if parsed.usage:
             summary = usage.get_usage_summary(user)
             balance_info = budget.get_balance_display(user)
-            slack.post_ephemeral(response_url, summary + "\n" + balance_info)
+            if isinstance(summary, list):
+                blocks = summary + [{"type": "section", "text": {"type": "mrkdwn", "text": balance_info}}]
+                slack.post_ephemeral(response_url, blocks=blocks)
+            else:
+                slack.post_ephemeral(response_url, summary + "\n" + balance_info)
             return
 
         if parsed.pay_amount is not None:
@@ -109,7 +113,12 @@ def main():
     print(f"Prompt: {parsed.prompt_text}")
 
     if parsed.usage:
-        print(usage.get_usage_summary("cli"))
+        summary = usage.get_usage_summary("cli")
+        if isinstance(summary, list):
+            for block in summary:
+                print(block["text"]["text"])
+        else:
+            print(summary)
         return
 
     if parsed.mode == "video":
