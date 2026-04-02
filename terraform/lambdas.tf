@@ -65,7 +65,7 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
-      Action   = ["dynamodb:PutItem", "dynamodb:Query"]
+      Action   = ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:Scan"]
       Resource = [
         aws_dynamodb_table.usage.arn,
         aws_dynamodb_table.ledger.arn,
