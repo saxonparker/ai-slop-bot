@@ -114,6 +114,36 @@ def get_balance_display(user: str) -> str:
     return "\n".join(parts)
 
 
+def get_all_balances() -> str:
+    """Return a formatted Slack mrkdwn report of all users' balances."""
+    try:
+        # Scan both tables to discover all users
+        users = set()
+        usage_table = boto3.resource("dynamodb").Table(
+            os.environ.get("USAGE_TABLE_NAME", "ai-slop-usage"))
+        ledger_table = _get_ledger_table()
+        for table in (usage_table, ledger_table):
+            response = table.scan(ProjectionExpression="#u",
+                                  ExpressionAttributeNames={"#u": "user"})
+            users.update(item["user"] for item in response.get("Items", []))
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"REPORT SCAN ERROR: {exc}")
+        return "Failed to retrieve user list."
+
+    if not users:
+        return "No users found."
+
+    rows = []
+    for user in sorted(users):
+        balance = get_balance(user)
+        total_cost = usage.get_total_cost(user)
+        total_credits = _get_total_credits(user)
+        icon = ":large_green_circle:" if balance >= 0 else ":red_circle:"
+        rows.append(f"{icon} *{user}*: balance ${balance:.2f}  (spent ${total_cost:.2f}, credited ${total_credits:.2f})")
+
+    return "*Balance Report*\n" + "\n".join(rows)
+
+
 def generate_venmo_link(amount: float, note: str = "AI Slop credits") -> str:
     """Generate a Venmo payment deep link."""
     username = os.environ.get("VENMO_USERNAME", "Saxon-Parker")

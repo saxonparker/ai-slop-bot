@@ -44,6 +44,13 @@ def ai_slop_bot(event, _):
             )
             return
 
+        if parsed.report:
+            if user not in budget.ADMIN_USERS:
+                slack.post_ephemeral(response_url, "Only admins can use -report.")
+                return
+            slack.post_ephemeral(response_url, budget.get_all_balances())
+            return
+
         if parsed.credit_target is not None:
             if user not in budget.ADMIN_USERS:
                 slack.post_ephemeral(response_url, "Only admins can use -credit.")

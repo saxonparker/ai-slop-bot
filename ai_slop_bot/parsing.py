@@ -12,6 +12,7 @@ class ParsedCommand(typing.NamedTuple):
     potato_mode: bool
     backend_override: str | None
     usage: bool
+    report: bool
     video_duration: int | None
     pay_amount: float | None = None
     credit_target: str | None = None
@@ -30,6 +31,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     emoji_mode = False
     potato_mode = False
     usage_mode = False
+    report_mode = False
     backend_override = None
     pay_amount = None
     credit_target = None
@@ -54,6 +56,8 @@ def parse_command(input_str: str) -> ParsedCommand:
             potato_mode = True
         elif lower in ("-u", "--usage"):
             usage_mode = True
+        elif lower in ("-report", "--report"):
+            report_mode = True
         elif lower == "-b":
             if i + 1 < len(tokens):
                 i += 1
@@ -98,4 +102,4 @@ def parse_command(input_str: str) -> ParsedCommand:
     prompt_text = text.replace("[", "").replace("]", "")
 
     mode = "video" if video_mode else "image" if image_mode else "text"
-    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode, video_duration, pay_amount, credit_target, credit_amount)
+    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode, report_mode, video_duration, pay_amount, credit_target, credit_amount)
