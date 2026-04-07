@@ -38,7 +38,7 @@ Two-Lambda architecture:
 | Variable | Default | Purpose |
 |---|---|---|
 | `TEXT_BACKEND` | `gemini` | Default text provider |
-| `IMAGE_BACKEND` | `gemini` | Default image provider |
+| `IMAGE_BACKEND` | `grok` | Default image provider |
 | `VIDEO_BACKEND` | `grok` | Default video provider |
 | `TEXT_MODEL` | varies by backend | Model name override |
 | `IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Model name override |

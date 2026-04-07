@@ -63,6 +63,6 @@ def get_video_provider(override: str | None = None) -> VideoProvider:
 
 
 def get_image_provider(override: str | None = None) -> ImageProvider:
-    """Get an image provider instance, using override, env var, or default (gemini)."""
-    backend = override or os.environ.get("IMAGE_BACKEND", "gemini")
+    """Get an image provider instance, using override, env var, or default (grok)."""
+    backend = override or os.environ.get("IMAGE_BACKEND", "grok")
     return _load_provider(IMAGE_PROVIDERS, backend)

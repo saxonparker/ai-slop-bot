@@ -35,7 +35,7 @@ variable "text_backend" {
 
 variable "image_backend" {
   type    = string
-  default = "gemini"
+  default = "grok"
 }
 
 variable "video_backend" {
