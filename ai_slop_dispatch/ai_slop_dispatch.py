@@ -66,6 +66,7 @@ def dispatch(event, _):
         message = {
             "response_url": params["response_url"],
             "channel_id": params.get("channel_id", ""),
+            "channel_name": params.get("channel_name", ""),
             "prompt": prompt,
             "user": user,
         }

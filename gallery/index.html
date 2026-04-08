@@ -95,6 +95,8 @@
 
         .search-input::placeholder { color: #555; }
 
+        .search-narrow { min-width: 130px; }
+
         .controls-right {
             display: flex;
             align-items: center;
@@ -422,7 +424,9 @@
 
         <div class="controls-right">
             <div class="search-container">
-                <input type="text" id="searchInput" class="search-input" placeholder="Search...">
+                <input type="text" id="searchPrompt" class="search-input" placeholder="Search prompts...">
+                <input type="text" id="searchUser" class="search-input search-narrow" placeholder="By user...">
+                <input type="text" id="searchChannel" class="search-input search-narrow" placeholder="By channel...">
             </div>
             <div class="items-per-page">
                 <label for="perPage">Per page:</label>
@@ -551,11 +555,14 @@
     }
 
     function applyFilters() {
-        var search = document.getElementById('searchInput').value.toLowerCase().trim();
+        var prompt = document.getElementById('searchPrompt').value.toLowerCase().trim();
+        var user = document.getElementById('searchUser').value.toLowerCase().trim();
+        var channel = document.getElementById('searchChannel').value.toLowerCase().trim();
         filteredItems = allItems.filter(function(item) {
             if (currentFilter !== 'all' && item.type !== currentFilter) return false;
-            if (search && !item.title.toLowerCase().includes(search) &&
-                !item.user.toLowerCase().includes(search)) return false;
+            if (prompt && !item.title.toLowerCase().includes(prompt)) return false;
+            if (user && !item.user.toLowerCase().includes(user)) return false;
+            if (channel && !item.channel.toLowerCase().includes(channel)) return false;
             return true;
         });
         render();
@@ -650,7 +657,7 @@
         var metaEl = document.getElementById('modalMeta');
         var parts = [];
         if (item.user) parts.push('by ' + item.user);
-        if (item.channel) parts.push('#' + item.channel);
+        if (item.channel) parts.push(item.channel);
         metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
@@ -683,9 +690,11 @@
     }
 
     // Event listeners
-    document.getElementById('searchInput').addEventListener('input', function() {
-        currentPage = 1;
-        applyFilters();
+    ['searchPrompt', 'searchUser', 'searchChannel'].forEach(function(id) {
+        document.getElementById(id).addEventListener('input', function() {
+            currentPage = 1;
+            applyFilters();
+        });
     });
 
     document.addEventListener('keydown', function(e) {
