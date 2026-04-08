@@ -369,6 +369,12 @@
 
         .modal-close:hover { color: #fff; }
 
+        .modal-meta {
+            color: #888;
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
         .modal-nav {
             position: absolute;
             top: 50%;
@@ -439,6 +445,7 @@
             <button class="modal-close" onclick="closeModal()">&times;</button>
             <div id="modalMedia"></div>
             <div id="modalTitle" class="modal-title"></div>
+            <div id="modalMeta" class="modal-meta"></div>
         </div>
         <button class="modal-nav modal-next" onclick="navigateModal(1)">&rsaquo;</button>
     </div>
@@ -466,13 +473,20 @@
         return VIDEO_EXTENSIONS.some(function(ext) { return lower.endsWith(ext); });
     }
 
-    function titleFromKey(key, prefix) {
+    function parseKey(key, prefix) {
         var name = key.replace(prefix, '');
-        var lastUnderscore = name.lastIndexOf('_');
-        if (lastUnderscore > 0) name = name.substring(0, lastUnderscore);
+        // Strip extension
         var dotIndex = name.lastIndexOf('.');
         if (dotIndex > 0) name = name.substring(0, dotIndex);
-        return name.replace(/_/g, ' ');
+        // Strip random tag (last _XXXXXXXXXX)
+        var lastUnderscore = name.lastIndexOf('_');
+        if (lastUnderscore > 0) name = name.substring(0, lastUnderscore);
+        // Parse ~user~channel if present
+        var parts = name.split('~');
+        var title = parts[0].replace(/_/g, ' ');
+        var user = parts.length >= 2 ? parts[1] : '';
+        var channel = parts.length >= 3 ? parts[2] : '';
+        return { title: title, user: user, channel: channel };
     }
 
     function loadGallery() {
@@ -494,10 +508,13 @@
                     if (obj.Key === prefix || obj.Size === 0) return;
                     var video = isVideo(obj.Key);
                     var encoded = obj.Key.split('/').map(encodeURIComponent).join('/');
+                    var parsed = parseKey(obj.Key, prefix);
                     allItems.push({
                         key: obj.Key,
                         url: CLOUDFRONT + '/' + encoded,
-                        title: titleFromKey(obj.Key, prefix),
+                        title: parsed.title,
+                        user: parsed.user,
+                        channel: parsed.channel,
                         type: video ? 'video' : 'photo',
                         date: obj.LastModified
                     });
@@ -537,7 +554,8 @@
         var search = document.getElementById('searchInput').value.toLowerCase().trim();
         filteredItems = allItems.filter(function(item) {
             if (currentFilter !== 'all' && item.type !== currentFilter) return false;
-            if (search && !item.title.toLowerCase().includes(search)) return false;
+            if (search && !item.title.toLowerCase().includes(search) &&
+                !item.user.toLowerCase().includes(search)) return false;
             return true;
         });
         render();
@@ -629,6 +647,11 @@
             mediaEl.innerHTML = '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '">';
         }
         document.getElementById('modalTitle').textContent = item.title;
+        var metaEl = document.getElementById('modalMeta');
+        var parts = [];
+        if (item.user) parts.push('by ' + item.user);
+        if (item.channel) parts.push('#' + item.channel);
+        metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
     }
