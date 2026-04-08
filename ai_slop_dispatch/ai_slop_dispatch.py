@@ -19,6 +19,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -b <backend> <prompt>` — use a specific backend
   `/slop-bot -u` — show your usage stats and balance
+  `/slop-bot -g` — link to the image gallery
   `/slop-bot -pay <amount>` — add credits and get a Venmo payment link
 
 *Flags can be combined:*
@@ -30,7 +31,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 
 *Backends:*
   Text: `gemini` (default), `anthropic`, `openai`, `grok`
-  Image: `gemini` (default), `openai`, `grok`
+  Image: `grok` (default), `gemini`, `openai`
   Video: `grok` (default)"""
 
 

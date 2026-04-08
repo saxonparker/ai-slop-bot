@@ -38,6 +38,13 @@ def ai_slop_bot(event, _):
                 slack.post_ephemeral(response_url, summary + "\n" + balance_info)
             return
 
+        if parsed.gallery:
+            slack.post_ephemeral(
+                response_url,
+                ":frame_with_picture: <https://d2jagmvo7k5q5j.cloudfront.net/index.html|AI Slop Gallery>",
+            )
+            return
+
         if parsed.pay_amount is not None:
             amount = parsed.pay_amount
             budget.add_credit(user, amount, source_user=user, note="Venmo payment")
@@ -77,7 +84,8 @@ def ai_slop_bot(event, _):
             result = provider.generate(prompt, duration=parsed.video_duration)
             print("GENERATE VIDEO COMPLETE")
             image_upload.upload_to_s3(prompt, result.content, extension="mp4",
-                                     user=user, channel=channel_name)
+                                     user=user, channel=channel_name,
+                                     model=result.model)
             slack.post_video_response(channel_id, user, parsed.display_text, result.content)
             usage.record_usage(user, result)
         elif parsed.mode == "image":
@@ -87,7 +95,8 @@ def ai_slop_bot(event, _):
             result = provider.generate(prompt)
             print("GENERATE IMAGE COMPLETE")
             url = image_upload.upload_to_s3(prompt, result.content,
-                                          user=user, channel=channel_name)
+                                          user=user, channel=channel_name,
+                                          model=result.model)
             print(f"UPLOAD URL {url}")
             slack.post_image_response(response_url, user, parsed.display_text, url)
             usage.record_usage(user, result)

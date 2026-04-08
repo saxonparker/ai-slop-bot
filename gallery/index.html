@@ -699,6 +699,7 @@
         var parts = [];
         if (meta.user) parts.push('by ' + meta.user);
         if (meta.channel) parts.push('#' + meta.channel);
+        if (meta.model) parts.push(meta.model);
         metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
