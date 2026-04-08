@@ -425,8 +425,8 @@
         <div class="controls-right">
             <div class="search-container">
                 <input type="text" id="searchPrompt" class="search-input" placeholder="Search prompts...">
-                <input type="text" id="searchUser" class="search-input search-narrow" placeholder="By user...">
-                <input type="text" id="searchChannel" class="search-input search-narrow" placeholder="By channel...">
+                <select id="searchUser" class="search-input search-narrow"><option value="">All users</option></select>
+                <select id="searchChannel" class="search-input search-narrow"><option value="">All channels</option></select>
             </div>
             <div class="items-per-page">
                 <label for="perPage">Per page:</label>
@@ -530,6 +530,7 @@
                 } else {
                     allItems.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
                     updateStats();
+                    populateDropdowns();
                     applyFilters();
                 }
             });
@@ -554,15 +555,37 @@
         applyFilters();
     }
 
+    function populateDropdowns() {
+        var users = {}, channels = {};
+        allItems.forEach(function(item) {
+            if (item.user) users[item.user] = true;
+            if (item.channel) channels[item.channel] = true;
+        });
+        var userSelect = document.getElementById('searchUser');
+        Object.keys(users).sort().forEach(function(u) {
+            var opt = document.createElement('option');
+            opt.value = u;
+            opt.textContent = u;
+            userSelect.appendChild(opt);
+        });
+        var channelSelect = document.getElementById('searchChannel');
+        Object.keys(channels).sort().forEach(function(c) {
+            var opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = '#' + c;
+            channelSelect.appendChild(opt);
+        });
+    }
+
     function applyFilters() {
         var prompt = document.getElementById('searchPrompt').value.toLowerCase().trim();
-        var user = document.getElementById('searchUser').value.toLowerCase().trim();
-        var channel = document.getElementById('searchChannel').value.toLowerCase().trim();
+        var user = document.getElementById('searchUser').value;
+        var channel = document.getElementById('searchChannel').value;
         filteredItems = allItems.filter(function(item) {
             if (currentFilter !== 'all' && item.type !== currentFilter) return false;
             if (prompt && !item.title.toLowerCase().includes(prompt)) return false;
-            if (user && !item.user.toLowerCase().includes(user)) return false;
-            if (channel && !item.channel.toLowerCase().includes(channel)) return false;
+            if (user && item.user !== user) return false;
+            if (channel && item.channel !== channel) return false;
             return true;
         });
         render();
@@ -657,7 +680,7 @@
         var metaEl = document.getElementById('modalMeta');
         var parts = [];
         if (item.user) parts.push('by ' + item.user);
-        if (item.channel) parts.push(item.channel);
+        if (item.channel) parts.push('#' + item.channel);
         metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
@@ -690,8 +713,12 @@
     }
 
     // Event listeners
-    ['searchPrompt', 'searchUser', 'searchChannel'].forEach(function(id) {
-        document.getElementById(id).addEventListener('input', function() {
+    document.getElementById('searchPrompt').addEventListener('input', function() {
+        currentPage = 1;
+        applyFilters();
+    });
+    ['searchUser', 'searchChannel'].forEach(function(id) {
+        document.getElementById(id).addEventListener('change', function() {
             currentPage = 1;
             applyFilters();
         });
