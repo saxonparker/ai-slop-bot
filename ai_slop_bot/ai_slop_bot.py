@@ -75,6 +75,7 @@ def ai_slop_bot(event, _):
             provider = providers.get_video_provider(parsed.backend_override)
             result = provider.generate(prompt, duration=parsed.video_duration)
             print("GENERATE VIDEO COMPLETE")
+            image_upload.upload_to_s3(prompt, result.content, extension="mp4")
             slack.post_video_response(channel_id, user, parsed.display_text, result.content)
             usage.record_usage(user, result)
         elif parsed.mode == "image":

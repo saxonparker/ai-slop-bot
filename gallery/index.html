@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Slop Gallery</title>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1375.0.min.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            padding: 40px 20px 20px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            color: #888;
+            margin-top: 6px;
+            font-size: 14px;
+        }
+
+        .controls {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .filter-pills {
+            display: flex;
+            gap: 4px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 4px;
+        }
+
+        .filter-pill {
+            padding: 8px 18px;
+            border: none;
+            background: transparent;
+            color: #888;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-pill:hover { color: #ccc; }
+
+        .filter-pill.active {
+            background: #2a2a2a;
+            color: #fff;
+        }
+
+        .search-container {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .search-input {
+            padding: 8px 14px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-size: 14px;
+            min-width: 220px;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #555;
+        }
+
+        .search-input::placeholder { color: #555; }
+
+        .controls-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .items-per-page select {
+            padding: 8px 10px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+
+        .items-per-page label {
+            font-size: 13px;
+            color: #888;
+        }
+
+        /* Grid */
+        .media-grid {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px 40px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+        }
+
+        .media-item {
+            position: relative;
+            background: #151515;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .media-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .media-item .thumb-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1;
+            overflow: hidden;
+            background: #111;
+        }
+
+        .media-item img, .media-item video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .play-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .media-item:hover .play-overlay { opacity: 1; }
+
+        .play-icon {
+            width: 56px;
+            height: 56px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .play-icon::after {
+            content: "";
+            display: block;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 10px 0 10px 18px;
+            border-color: transparent transparent transparent #0a0a0a;
+            margin-left: 4px;
+        }
+
+        .media-title {
+            padding: 10px 12px;
+            font-size: 13px;
+            color: #ccc;
+            line-height: 1.4;
+            word-wrap: break-word;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .media-badge {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            z-index: 1;
+        }
+
+        .badge-video {
+            background: rgba(139, 92, 246, 0.85);
+            color: #fff;
+        }
+
+        /* Loading / empty states */
+        .status-message {
+            text-align: center;
+            padding: 80px 20px;
+            font-size: 16px;
+            color: #666;
+        }
+
+        .status-message .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #333;
+            border-top-color: #888;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Pagination */
+        .pagination {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px 40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .page-btn {
+            padding: 8px 14px;
+            border: 1px solid #333;
+            background: #1a1a1a;
+            color: #ccc;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.15s;
+        }
+
+        .page-btn:hover:not(:disabled) {
+            background: #2a2a2a;
+            border-color: #555;
+        }
+
+        .page-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .page-btn.active {
+            background: #fff;
+            color: #0a0a0a;
+            border-color: #fff;
+        }
+
+        .page-info {
+            font-size: 13px;
+            color: #888;
+            margin: 0 8px;
+        }
+
+        .page-jump {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: 12px;
+        }
+
+        .page-jump span { font-size: 13px; color: #888; }
+
+        .page-jump-input {
+            width: 56px;
+            padding: 6px 8px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .page-jump-input:focus { outline: none; border-color: #555; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+
+        .modal-overlay.open {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-body {
+            position: relative;
+            max-width: 90vw;
+            max-height: 90vh;
+            text-align: center;
+        }
+
+        .modal-body img {
+            max-width: 90vw;
+            max-height: 80vh;
+            object-fit: contain;
+            border-radius: 6px;
+        }
+
+        .modal-body video {
+            max-width: 90vw;
+            max-height: 80vh;
+            border-radius: 6px;
+            outline: none;
+        }
+
+        .modal-title {
+            color: #ccc;
+            font-size: 15px;
+            margin-top: 14px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: -36px;
+            right: 0;
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 28px;
+            cursor: pointer;
+            transition: color 0.15s;
+            line-height: 1;
+        }
+
+        .modal-close:hover { color: #fff; }
+
+        .modal-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #ccc;
+            font-size: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s;
+        }
+
+        .modal-nav:hover { background: rgba(255, 255, 255, 0.2); }
+        .modal-prev { left: -60px; }
+        .modal-next { right: -60px; }
+
+        @media (max-width: 768px) {
+            .controls { flex-direction: column; align-items: stretch; }
+            .search-input { min-width: 0; flex: 1; }
+            .media-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+            .modal-prev { left: 4px; }
+            .modal-next { right: 4px; }
+            .modal-nav { width: 36px; height: 36px; font-size: 18px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>AI Slop Gallery</h1>
+        <p id="statsLine"></p>
+    </div>
+
+    <div class="controls">
+        <div class="filter-pills">
+            <button class="filter-pill active" data-filter="all" onclick="setFilter('all')">All</button>
+            <button class="filter-pill" data-filter="photo" onclick="setFilter('photo')">Photos</button>
+            <button class="filter-pill" data-filter="video" onclick="setFilter('video')">Videos</button>
+        </div>
+
+        <div class="controls-right">
+            <div class="search-container">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search...">
+            </div>
+            <div class="items-per-page">
+                <label for="perPage">Per page:</label>
+                <select id="perPage" onchange="changePerPage()">
+                    <option value="24">24</option>
+                    <option value="48" selected>48</option>
+                    <option value="96">96</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div id="grid" class="media-grid"></div>
+
+    <div id="pagination" class="pagination" style="display:none;"></div>
+
+    <div id="modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <button class="modal-nav modal-prev" onclick="navigateModal(-1)">&lsaquo;</button>
+        <div class="modal-body">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div id="modalMedia"></div>
+            <div id="modalTitle" class="modal-title"></div>
+        </div>
+        <button class="modal-nav modal-next" onclick="navigateModal(1)">&rsaquo;</button>
+    </div>
+
+    <script>
+    var BUCKET = 'dallepics';
+    var CLOUDFRONT = 'https://d2jagmvo7k5q5j.cloudfront.net';
+    var VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm'];
+
+    AWS.config.region = 'us-east-2';
+    AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+        IdentityPoolId: 'us-east-2:a9b938e6-69b1-40a2-9023-b0d4e798e0e4',
+    });
+    var s3 = new AWS.S3({ apiVersion: '2006-03-01', params: { Bucket: BUCKET } });
+
+    var allItems = [];
+    var filteredItems = [];
+    var currentFilter = 'all';
+    var currentPage = 1;
+    var perPage = 48;
+    var modalIndex = -1;
+
+    function isVideo(key) {
+        var lower = key.toLowerCase();
+        return VIDEO_EXTENSIONS.some(function(ext) { return lower.endsWith(ext); });
+    }
+
+    function titleFromKey(key, prefix) {
+        var name = key.replace(prefix, '');
+        var lastUnderscore = name.lastIndexOf('_');
+        if (lastUnderscore > 0) name = name.substring(0, lastUnderscore);
+        var dotIndex = name.lastIndexOf('.');
+        if (dotIndex > 0) name = name.substring(0, dotIndex);
+        return name.replace(/_/g, ' ');
+    }
+
+    function loadGallery() {
+        var prefix = 'dalle/';
+        allItems = [];
+        showLoading('Loading media...');
+
+        function fetchPage(token) {
+            var params = { Prefix: prefix, MaxKeys: 1000 };
+            if (token) params.ContinuationToken = token;
+
+            s3.listObjectsV2(params, function(err, data) {
+                if (err) {
+                    showLoading('Error loading gallery: ' + err.message);
+                    return;
+                }
+
+                data.Contents.forEach(function(obj) {
+                    if (obj.Key === prefix || obj.Size === 0) return;
+                    var video = isVideo(obj.Key);
+                    var encoded = obj.Key.split('/').map(encodeURIComponent).join('/');
+                    allItems.push({
+                        key: obj.Key,
+                        url: CLOUDFRONT + '/' + encoded,
+                        title: titleFromKey(obj.Key, prefix),
+                        type: video ? 'video' : 'photo',
+                        date: obj.LastModified
+                    });
+                });
+
+                if (data.IsTruncated && data.NextContinuationToken) {
+                    showLoading('Loading media... (' + allItems.length + ' found)');
+                    fetchPage(data.NextContinuationToken);
+                } else {
+                    allItems.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
+                    updateStats();
+                    applyFilters();
+                }
+            });
+        }
+
+        fetchPage();
+    }
+
+    function updateStats() {
+        var photos = allItems.filter(function(i) { return i.type === 'photo'; }).length;
+        var videos = allItems.filter(function(i) { return i.type === 'video'; }).length;
+        document.getElementById('statsLine').textContent =
+            photos + ' photos, ' + videos + ' videos';
+    }
+
+    function setFilter(filter) {
+        currentFilter = filter;
+        document.querySelectorAll('.filter-pill').forEach(function(pill) {
+            pill.classList.toggle('active', pill.dataset.filter === filter);
+        });
+        currentPage = 1;
+        applyFilters();
+    }
+
+    function applyFilters() {
+        var search = document.getElementById('searchInput').value.toLowerCase().trim();
+        filteredItems = allItems.filter(function(item) {
+            if (currentFilter !== 'all' && item.type !== currentFilter) return false;
+            if (search && !item.title.toLowerCase().includes(search)) return false;
+            return true;
+        });
+        render();
+    }
+
+    function render() {
+        var grid = document.getElementById('grid');
+        var start = (currentPage - 1) * perPage;
+        var page = filteredItems.slice(start, start + perPage);
+
+        if (filteredItems.length === 0) {
+            grid.innerHTML = '<div class="status-message" style="grid-column:1/-1">No results found.</div>';
+            document.getElementById('pagination').style.display = 'none';
+            return;
+        }
+
+        grid.innerHTML = page.map(function(item, i) {
+            var globalIdx = start + i;
+            if (item.type === 'video') {
+                return '<div class="media-item" onclick="openModal(' + globalIdx + ')">' +
+                    '<div class="thumb-container">' +
+                        '<video src="' + item.url + '" preload="metadata" muted></video>' +
+                        '<span class="media-badge badge-video">Video</span>' +
+                        '<div class="play-overlay"><div class="play-icon"></div></div>' +
+                    '</div>' +
+                    '<div class="media-title">' + escapeHtml(item.title) + '</div>' +
+                '</div>';
+            }
+            return '<div class="media-item" onclick="openModal(' + globalIdx + ')">' +
+                '<div class="thumb-container">' +
+                    '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=status-message>Failed to load</div>\'">' +
+                '</div>' +
+                '<div class="media-title">' + escapeHtml(item.title) + '</div>' +
+            '</div>';
+        }).join('');
+
+        renderPagination();
+    }
+
+    function renderPagination() {
+        var totalPages = Math.ceil(filteredItems.length / perPage);
+        var el = document.getElementById('pagination');
+        if (totalPages <= 1) { el.style.display = 'none'; return; }
+
+        el.style.display = 'flex';
+        var html = '<button class="page-btn" onclick="goPage(currentPage-1)" ' +
+            (currentPage === 1 ? 'disabled' : '') + '>&lsaquo; Prev</button>';
+        html += '<span class="page-info">Page ' + currentPage + ' of ' + totalPages +
+            ' (' + filteredItems.length + ' items)</span>';
+        html += '<button class="page-btn" onclick="goPage(currentPage+1)" ' +
+            (currentPage === totalPages ? 'disabled' : '') + '>Next &rsaquo;</button>';
+        html += '<div class="page-jump"><span>Go to:</span>' +
+            '<input type="number" class="page-jump-input" id="jumpInput" min="1" max="' + totalPages + '">' +
+            '<button class="page-btn" onclick="jumpTo()">Go</button></div>';
+        el.innerHTML = html;
+
+        document.getElementById('jumpInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') jumpTo();
+        });
+    }
+
+    function goPage(p) {
+        var totalPages = Math.ceil(filteredItems.length / perPage);
+        if (p < 1 || p > totalPages) return;
+        currentPage = p;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function jumpTo() {
+        var val = parseInt(document.getElementById('jumpInput').value);
+        if (!isNaN(val)) goPage(val);
+    }
+
+    function changePerPage() {
+        perPage = parseInt(document.getElementById('perPage').value);
+        currentPage = 1;
+        render();
+    }
+
+    // Modal
+    function openModal(idx) {
+        modalIndex = idx;
+        var item = filteredItems[idx];
+        var mediaEl = document.getElementById('modalMedia');
+        if (item.type === 'video') {
+            mediaEl.innerHTML = '<video src="' + item.url + '" controls autoplay style="max-width:90vw;max-height:80vh;border-radius:6px;"></video>';
+        } else {
+            mediaEl.innerHTML = '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '">';
+        }
+        document.getElementById('modalTitle').textContent = item.title;
+        document.getElementById('modal').classList.add('open');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal() {
+        var modal = document.getElementById('modal');
+        modal.classList.remove('open');
+        document.body.style.overflow = '';
+        var video = modal.querySelector('video');
+        if (video) video.pause();
+        modalIndex = -1;
+    }
+
+    function navigateModal(dir) {
+        var next = modalIndex + dir;
+        if (next >= 0 && next < filteredItems.length) openModal(next);
+    }
+
+    function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function showLoading(msg) {
+        document.getElementById('grid').innerHTML =
+            '<div class="status-message" style="grid-column:1/-1">' +
+            '<div class="spinner"></div>' + msg + '</div>';
+    }
+
+    // Event listeners
+    document.getElementById('searchInput').addEventListener('input', function() {
+        currentPage = 1;
+        applyFilters();
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeModal();
+        if (modalIndex < 0) return;
+        if (e.key === 'ArrowLeft') navigateModal(-1);
+        if (e.key === 'ArrowRight') navigateModal(1);
+    });
+
+    loadGallery();
+    </script>
+</body>
+</html>

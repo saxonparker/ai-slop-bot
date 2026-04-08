@@ -116,3 +116,7 @@ jobs:
           TF_VAR_openai_organization: ${{ secrets.OPENAI_ORGANIZATION }}
           TF_VAR_xai_api_key: ${{ secrets.XAI_API_KEY }}
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Deploy gallery to S3
+        working-directory: gallery
+        run: aws s3 cp index.html s3://dallepics/index.html --content-type "text/html"
