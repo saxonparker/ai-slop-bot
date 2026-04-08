@@ -504,7 +504,8 @@
     }
 
     function getItemMeta(item) {
-        return manifest[item.key] || { user: '', channel: '' };
+        var m = manifest[item.key] || {};
+        return { user: m.user || '', channel: m.channel || '', model: m.model || '' };
     }
 
     function loadGallery() {
