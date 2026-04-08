@@ -477,20 +477,34 @@
         return VIDEO_EXTENSIONS.some(function(ext) { return lower.endsWith(ext); });
     }
 
-    function parseKey(key, prefix) {
+    function titleFromKey(key, prefix) {
         var name = key.replace(prefix, '');
-        // Strip extension
         var dotIndex = name.lastIndexOf('.');
         if (dotIndex > 0) name = name.substring(0, dotIndex);
-        // Strip random tag (last _XXXXXXXXXX)
         var lastUnderscore = name.lastIndexOf('_');
         if (lastUnderscore > 0) name = name.substring(0, lastUnderscore);
-        // Parse ~user~channel if present
-        var parts = name.split('~');
-        var title = parts[0].replace(/_/g, ' ');
-        var user = parts.length >= 2 ? parts[1] : '';
-        var channel = parts.length >= 3 ? parts[2] : '';
-        return { title: title, user: user, channel: channel };
+        return name.replace(/_/g, ' ');
+    }
+
+    var manifest = {};
+    var knownUsers = {};
+    var knownChannels = {};
+
+    function loadManifest(callback) {
+        s3.getObject({ Key: 'dalle/manifest.json' }, function(err, data) {
+            if (!err && data.Body) {
+                manifest = JSON.parse(data.Body.toString());
+                Object.values(manifest).forEach(function(m) {
+                    if (m.user) knownUsers[m.user] = true;
+                    if (m.channel) knownChannels[m.channel] = true;
+                });
+            }
+            callback();
+        });
+    }
+
+    function getItemMeta(item) {
+        return manifest[item.key] || { user: '', channel: '' };
     }
 
     function loadGallery() {
@@ -512,13 +526,10 @@
                     if (obj.Key === prefix || obj.Size === 0) return;
                     var video = isVideo(obj.Key);
                     var encoded = obj.Key.split('/').map(encodeURIComponent).join('/');
-                    var parsed = parseKey(obj.Key, prefix);
                     allItems.push({
                         key: obj.Key,
                         url: CLOUDFRONT + '/' + encoded,
-                        title: parsed.title,
-                        user: parsed.user,
-                        channel: parsed.channel,
+                        title: titleFromKey(obj.Key, prefix),
                         type: video ? 'video' : 'photo',
                         date: obj.LastModified
                     });
@@ -530,8 +541,10 @@
                 } else {
                     allItems.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
                     updateStats();
-                    populateDropdowns();
-                    applyFilters();
+                    loadManifest(function() {
+                        populateDropdowns();
+                        applyFilters();
+                    });
                 }
             });
         }
@@ -556,25 +569,26 @@
     }
 
     function populateDropdowns() {
-        var users = {}, channels = {};
-        allItems.forEach(function(item) {
-            if (item.user) users[item.user] = true;
-            if (item.channel) channels[item.channel] = true;
-        });
         var userSelect = document.getElementById('searchUser');
-        Object.keys(users).sort().forEach(function(u) {
+        var channelSelect = document.getElementById('searchChannel');
+        var prevUser = userSelect.value;
+        var prevChannel = channelSelect.value;
+        userSelect.innerHTML = '<option value="">All users</option>';
+        channelSelect.innerHTML = '<option value="">All channels</option>';
+        Object.keys(knownUsers).sort().forEach(function(u) {
             var opt = document.createElement('option');
             opt.value = u;
             opt.textContent = u;
             userSelect.appendChild(opt);
         });
-        var channelSelect = document.getElementById('searchChannel');
-        Object.keys(channels).sort().forEach(function(c) {
+        Object.keys(knownChannels).sort().forEach(function(c) {
             var opt = document.createElement('option');
             opt.value = c;
             opt.textContent = '#' + c;
             channelSelect.appendChild(opt);
         });
+        userSelect.value = prevUser;
+        channelSelect.value = prevChannel;
     }
 
     function applyFilters() {
@@ -584,8 +598,11 @@
         filteredItems = allItems.filter(function(item) {
             if (currentFilter !== 'all' && item.type !== currentFilter) return false;
             if (prompt && !item.title.toLowerCase().includes(prompt)) return false;
-            if (user && item.user !== user) return false;
-            if (channel && item.channel !== channel) return false;
+            if (user || channel) {
+                var meta = getItemMeta(item);
+                if (user && meta.user !== user) return false;
+                if (channel && meta.channel !== channel) return false;
+            }
             return true;
         });
         render();
@@ -677,10 +694,11 @@
             mediaEl.innerHTML = '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '">';
         }
         document.getElementById('modalTitle').textContent = item.title;
+        var meta = getItemMeta(item);
         var metaEl = document.getElementById('modalMeta');
         var parts = [];
-        if (item.user) parts.push('by ' + item.user);
-        if (item.channel) parts.push('#' + item.channel);
+        if (meta.user) parts.push('by ' + meta.user);
+        if (meta.channel) parts.push('#' + meta.channel);
         metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
