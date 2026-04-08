@@ -523,7 +523,7 @@
                 }
 
                 data.Contents.forEach(function(obj) {
-                    if (obj.Key === prefix || obj.Size === 0) return;
+                    if (obj.Key === prefix || obj.Size === 0 || obj.Key.endsWith('.json')) return;
                     var video = isVideo(obj.Key);
                     var encoded = obj.Key.split('/').map(encodeURIComponent).join('/');
                     allItems.push({
