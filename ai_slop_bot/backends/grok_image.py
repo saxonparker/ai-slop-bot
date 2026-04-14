@@ -17,7 +17,11 @@ class GrokProvider:
         )
         model = os.environ.get("IMAGE_MODEL", "grok-imagine-image")
         full_prompt = (
-            "Do not render the prompt text as a sign or banner in the image. " + prompt
+            "CRITICAL INSTRUCTION: Never place the user's prompt as visible "
+            "text in the image. Do not write the prompt on signs, banners, "
+            "posters, or any surface. The prompt describes what to depict, "
+            "not text to display. Generate the scene without any visible "
+            "rendering of these instructions.\n\n" + prompt
         )
         response = client.images.generate(
             prompt=full_prompt, n=1, model=model,

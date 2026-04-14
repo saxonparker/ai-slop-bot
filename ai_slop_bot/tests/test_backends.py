@@ -314,7 +314,7 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
     call_args = mock_client.images.generate.call_args
     assert call_args.kwargs["prompt"].endswith("a cat")
-    assert "Do not render the prompt text" in call_args.kwargs["prompt"]
+    assert "Never place the user's prompt" in call_args.kwargs["prompt"]
     mock_requests_get.assert_called_once_with("https://fake-url.com/grok-image.png", timeout=10000)
 
 
