@@ -16,8 +16,11 @@ class GrokProvider:
             base_url="https://api.x.ai/v1",
         )
         model = os.environ.get("IMAGE_MODEL", "grok-imagine-image")
+        full_prompt = (
+            "Do not render the prompt text as a sign or banner in the image. " + prompt
+        )
         response = client.images.generate(
-            prompt=prompt, n=1, model=model,
+            prompt=full_prompt, n=1, model=model,
         )
         image_url = response.data[0].url
         image_response = requests.get(image_url, timeout=10000)
