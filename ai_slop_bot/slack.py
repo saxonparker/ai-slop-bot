@@ -27,6 +27,113 @@ def post_text_response(response_url: str, user: str, display: str, response: str
     )
 
 
+def post_text_response_in_thread(response_url: str, user: str, display: str,
+                                 response: str, thread_ts: str,
+                                 footer_blocks: list | None = None):
+    """Post a text response into a Slack thread via response_url."""
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f'{user} asked slop-bot: "{display}":',
+            },
+        },
+    ]
+    if footer_blocks:
+        blocks.extend(footer_blocks)
+    requests.post(
+        response_url,
+        data=json.dumps({
+            "response_type": "in_channel",
+            "thread_ts": thread_ts,
+            "blocks": blocks,
+            "attachments": [{"text": response}],
+        }),
+        timeout=10000,
+    )
+
+
+def post_text_chat_postmessage(channel_id: str, user: str, display: str,
+                               response: str, thread_ts: str | None = None,
+                               footer_blocks: list | None = None) -> str:
+    """Post a text response via chat.postMessage. Returns the posted message's ts.
+
+    Used for first-turn-at-top-level conversations to mint a thread_ts. Raises
+    RuntimeError on Slack API failure (e.g. not_in_channel for DMs without bot).
+    """
+    token = os.environ["SLACK_BOT_TOKEN"]
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f'{user} asked slop-bot: "{display}":',
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": response},
+        },
+    ]
+    if footer_blocks:
+        blocks.extend(footer_blocks)
+    payload = {
+        "channel": channel_id,
+        "blocks": blocks,
+        "text": response,
+    }
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    resp = requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        data=json.dumps(payload),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Slack chat.postMessage failed: {data.get('error')}")
+    return data["ts"]
+
+
+def post_thread_notice(channel_id: str, thread_ts: str, text: str):
+    """Post a plain notice into a thread via chat.postMessage (no preamble)."""
+    token = os.environ["SLACK_BOT_TOKEN"]
+    resp = requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        data=json.dumps({
+            "channel": channel_id, "thread_ts": thread_ts, "text": text,
+        }),
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
+def conversation_started_footer(backend: str) -> dict:
+    """Return a Slack context block for the first-turn 'conversation started' footer."""
+    return {
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": (
+                    f":speech_balloon: Conversation started — reply in this thread"
+                    f" to continue. Backend: `{backend}`."
+                ),
+            },
+        ],
+    }
+
+
 def post_image_response(response_url: str, user: str, display: str, image_url: str):
     """Post an image response back to Slack."""
     requests.post(

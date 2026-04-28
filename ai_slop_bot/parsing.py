@@ -1,23 +1,25 @@
 """Flag parsing and directive syntax for /ai-slop commands."""
 
-import typing
+from dataclasses import dataclass
 
 
-class ParsedCommand(typing.NamedTuple):
+@dataclass
+class ParsedCommand:
     """Result of parsing an /ai-slop command string."""
     mode: str  # "text", "image", or "video"
-    display_text: str
-    prompt_text: str
-    emoji_mode: bool
-    potato_mode: bool
-    backend_override: str | None
-    usage: bool
-    report: bool
-    gallery: bool
-    video_duration: int | None
+    display_text: str = ""
+    prompt_text: str = ""
+    emoji_mode: bool = False
+    potato_mode: bool = False
+    backend_override: str | None = None
+    usage: bool = False
+    report: bool = False
+    gallery: bool = False
+    video_duration: int | None = None
     pay_amount: float | None = None
     credit_target: str | None = None
     credit_amount: float | None = None
+    conversation: bool = False
 
 
 def parse_command(input_str: str) -> ParsedCommand:
@@ -38,6 +40,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     pay_amount = None
     credit_target = None
     credit_amount = None
+    conversation_mode = False
 
     # Extract flags
     prompt_tokens = []
@@ -74,6 +77,8 @@ def parse_command(input_str: str) -> ParsedCommand:
                 except ValueError:
                     prompt_tokens.append(token)
                     prompt_tokens.append(tokens[i])
+        elif lower in ("-c", "--conversation"):
+            conversation_mode = True
         elif lower in ("-credit", "--credit"):
             if i + 2 < len(tokens):
                 i += 1
@@ -106,4 +111,19 @@ def parse_command(input_str: str) -> ParsedCommand:
     prompt_text = text.replace("[", "").replace("]", "")
 
     mode = "video" if video_mode else "image" if image_mode else "text"
-    return ParsedCommand(mode, display_text, prompt_text, emoji_mode, potato_mode, backend_override, usage_mode, report_mode, gallery_mode, video_duration, pay_amount, credit_target, credit_amount)
+    return ParsedCommand(
+        mode=mode,
+        display_text=display_text,
+        prompt_text=prompt_text,
+        emoji_mode=emoji_mode,
+        potato_mode=potato_mode,
+        backend_override=backend_override,
+        usage=usage_mode,
+        report=report_mode,
+        gallery=gallery_mode,
+        video_duration=video_duration,
+        pay_amount=pay_amount,
+        credit_target=credit_target,
+        credit_amount=credit_amount,
+        conversation=conversation_mode,
+    )

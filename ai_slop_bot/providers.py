@@ -10,6 +10,7 @@ from usage import GenerationResult
 class TextProvider(Protocol):
     """Interface for text generation backends."""
     def generate(self, system: str, prompt: str) -> GenerationResult: ...
+    def chat(self, system: str, messages: list[dict]) -> GenerationResult: ...
 
 
 class ImageProvider(Protocol):
