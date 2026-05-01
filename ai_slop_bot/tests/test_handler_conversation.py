@@ -1,12 +1,12 @@
 """Orchestration tests for ai_slop_bot._handle_continuation_turn and
 _handle_first_turn. Covers happy path, phantom-turn (turn_count moved),
 lock-contention, hard-cap rejection, top-level create-failure warning,
-the -c-on-existing notice, and resolved-backend persistence. The
-conversations / providers / slack / usage modules are mocked at import
-boundaries.
+resolved-backend persistence, and the event-mention path that uses
+chat.postMessage in place of response_url. The conversations / providers
+/ slack / usage modules are mocked at import boundaries.
 """
 
-import dataclasses
+import json
 import sys
 import time
 from unittest.mock import MagicMock, patch
@@ -250,7 +250,7 @@ def test_first_turn_top_level_warns_on_create_failure(mock_create, _mock_prompts
     with pytest.raises(RuntimeError, match="dynamodb down"):
         ai_slop_bot._handle_first_turn(
             parsed=_parsed("hello"), user="alice", channel_id="C",
-            response_url="https://hooks/x", thread_ts=None,
+            response_url="https://hooks/x",
             lambda_start=time.time(),
         )
 
@@ -267,19 +267,20 @@ def test_first_turn_top_level_warns_on_create_failure(mock_create, _mock_prompts
 @patch("ai_slop_bot.providers.get_text_provider")
 @patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
 @patch("ai_slop_bot.conversations.create")
-def test_first_turn_in_thread_persists_resolved_backend(mock_create, _mock_prompts,
+def test_first_turn_top_level_persists_resolved_backend(mock_create, _mock_prompts,
                                                         mock_get_provider, mock_slack,
                                                         mock_record):
     provider = MagicMock()
     provider.chat.return_value = _result()  # backend="anthropic"
     mock_get_provider.return_value = provider
+    mock_slack.post_text_chat_postmessage.return_value = "1700.0"
 
     parsed_no_override = _parsed("hello")
     assert parsed_no_override.backend_override is None
 
     ai_slop_bot._handle_first_turn(
         parsed=parsed_no_override, user="alice", channel_id="C",
-        response_url="https://hooks/x", thread_ts="1700.0",
+        response_url="https://hooks/x",
         lambda_start=time.time(),
     )
 
@@ -316,37 +317,122 @@ def test_continuation_persists_resolved_backend(mock_acquire, mock_get, mock_app
     assert user_msg["backend"] == "anthropic"
 
 
-@patch("ai_slop_bot.usage")
+@patch("ai_slop_bot.usage.record_usage")
 @patch("ai_slop_bot.slack")
 @patch("ai_slop_bot.providers.get_text_provider")
 @patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
 @patch("ai_slop_bot.conversations.release_lock")
 @patch("ai_slop_bot.conversations.append_turn", return_value=True)
+@patch("ai_slop_bot.conversations.get")
 @patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-@patch("ai_slop_bot.conversations.is_enabled", return_value=True)
-def test_dispatch_posts_notice_when_minus_c_in_existing_conversation(
-    _mock_enabled, _mock_acquire, _mock_append, _mock_release,
-    _mock_prompts, mock_get_provider, mock_slack, _mock_usage,
+def test_continuation_event_mention_posts_via_chat_postmessage(
+    _mock_acquire, mock_get, _mock_append, _mock_release, _mock_prompts,
+    mock_get_provider, mock_slack, _mock_record,
 ):
     existing = _conv()
+    mock_get.return_value = existing
     provider = MagicMock()
     provider.chat.return_value = _result()
     mock_get_provider.return_value = provider
 
-    parsed_with_c = dataclasses.replace(_parsed("follow up"), conversation=True)
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C",
-        "channel_name": "general", "thread_ts": "1700.0",
-        "prompt": "-c follow up", "user": "bob",
-    }
-    import json
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+    ai_slop_bot._handle_continuation_turn(
+        parsed=_parsed(), user="alice", response_url="",
+        thread_ts="1700.0", existing_conv=existing,
+        request_id="req-A", lambda_start=time.time(),
+        channel_id="C", source="event_mention",
+    )
 
-    with patch("ai_slop_bot.parsing.parse_command", return_value=parsed_with_c), \
-         patch("ai_slop_bot.conversations.get", return_value=existing):
+    mock_slack.post_text_chat_postmessage.assert_called_once()
+    mock_slack.post_text_response_in_thread.assert_not_called()
+    kwargs = mock_slack.post_text_chat_postmessage.call_args.kwargs
+    assert kwargs["channel_id"] == "C"
+    assert kwargs["thread_ts"] == "1700.0"
+
+
+@patch("ai_slop_bot.usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_text_provider")
+@patch("ai_slop_bot.conversations.is_enabled", return_value=True)
+def test_event_mention_text_without_conversation_is_ignored_silently(
+    _mock_enabled, mock_get_provider, mock_slack, _mock_usage,
+):
+    sns_message = {
+        "response_url": "", "channel_id": "C", "channel_name": "",
+        "thread_ts": "1700.0", "prompt": "hello",
+        "user": "U123", "event_user_id": "U123",
+        "source": "event_mention",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+    mock_slack.get_user_display_name.return_value = "alice"
+
+    with patch("ai_slop_bot.conversations.get", return_value=None):
         ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
 
-    notice_calls = [c for c in mock_slack.post_ephemeral.call_args_list
-                    if "already a conversation" in (c.args[1] if len(c.args) > 1
-                                                    else c.kwargs.get("text", ""))]
-    assert len(notice_calls) == 1
+    mock_get_provider.assert_not_called()
+    mock_slack.post_text_chat_postmessage.assert_not_called()
+    mock_slack.post_thread_notice.assert_not_called()
+    mock_slack.post_ephemeral.assert_not_called()
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_image_provider")
+@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://img/url")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+def test_event_mention_image_posts_in_thread(
+    _mock_sanitize, _mock_upload, mock_get_provider, mock_slack, _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"img-bytes")
+    mock_get_provider.return_value = provider
+
+    sns_message = {
+        "response_url": "", "channel_id": "C", "channel_name": "",
+        "thread_ts": "1700.0", "prompt": "-i a cat",
+        "user": "U123", "event_user_id": "U123",
+        "source": "event_mention",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+    mock_slack.get_user_display_name.return_value = "alice"
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    mock_slack.post_image_response_in_thread.assert_called_once()
+    args = mock_slack.post_image_response_in_thread.call_args.args
+    assert args[0] == "C"
+    assert args[1] == "alice"
+    assert args[4] == "1700.0"
+    mock_slack.post_image_response.assert_not_called()
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_text_provider")
+@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
+@patch("ai_slop_bot.conversations.release_lock")
+@patch("ai_slop_bot.conversations.append_turn", return_value=False)
+@patch("ai_slop_bot.conversations.get")
+@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
+def test_continuation_event_mention_phantom_drop_posts_thread_notice(
+    _mock_acquire, mock_get, _mock_append, _mock_release, _mock_prompts,
+    mock_get_provider, mock_slack, _mock_record,
+):
+    existing = _conv()
+    mock_get.return_value = existing
+    provider = MagicMock()
+    provider.chat.return_value = _result()
+    mock_get_provider.return_value = provider
+
+    ai_slop_bot._handle_continuation_turn(
+        parsed=_parsed(), user="alice", response_url="",
+        thread_ts="1700.0", existing_conv=existing,
+        request_id="req-A", lambda_start=time.time(),
+        channel_id="C", source="event_mention",
+    )
+
+    mock_slack.post_thread_notice.assert_called_once()
+    notice_args = mock_slack.post_thread_notice.call_args.args
+    assert notice_args[0] == "C"
+    assert notice_args[1] == "1700.0"
+    assert "modified by another in-flight turn" in notice_args[2]
+    mock_slack.post_error.assert_not_called()

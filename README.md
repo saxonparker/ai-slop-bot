@@ -8,10 +8,15 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 - `/ai-slop -i <prompt>` — image generation (default: Google Gemini)
 - `/ai-slop -v <prompt>` — video generation (default: xAI Grok)
 - `/ai-slop -e <prompt>` — emoji-only text response
+- `/ai-slop -c <prompt>` — start a multi-turn text conversation in a thread
+- `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
 - `/ai-slop -b gemini <prompt>` — text with specific backend
 - `/ai-slop -i -b openai <prompt>` — image with specific backend (DALL-E)
 - `/ai-slop -v -b grok <prompt>` — video with specific backend
 - `[hidden directive]` syntax hides instructions from display
+
+Slack does not allow slash commands inside threads, so conversation
+follow-ups are made by `@`-mentioning the bot in the thread instead.
 
 ## Architecture
 
@@ -89,11 +94,30 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
 
 3. Push to `main` — GitHub Actions will test, build, and deploy.
 
-4. After first deploy, get the Slack webhook URL:
+4. After first deploy, get the API Gateway base URL:
    ```bash
    cd terraform && terraform output api_gateway_url
    ```
-   Configure this as the Request URL in your Slack slash command settings.
+
+   Configure your Slack app at https://api.slack.com/apps as follows:
+   - **Slash command** Request URL: `<base_url>/ai-slop`
+   - **Event Subscriptions** → Enable Events
+     - Request URL: `<base_url>/slack/events`
+     - Subscribe to bot event: `app_mention`
+   - **OAuth & Permissions** → Bot Token Scopes:
+     - `chat:write` - write messages
+     - `commands` - receive slash commands
+     - `files:write` - write files
+     - `app_mentions:read` — receive `@slop-bot` events
+     - `users:read` — resolve user IDs to display names in transcripts
+   - Reinstall the app to your workspace after changing scopes; copy the
+     new Bot User OAuth Token into the `slack_bot_token` Terraform variable.
+   - Invite the bot to any channel where users will `@`-mention it
+     (`/invite @slop-bot`).
+
+   Note: neither endpoint currently verifies Slack request signatures —
+   adding `X-Slack-Signature` verification with `SLACK_SIGNING_SECRET` is
+   a follow-up.
 
 ### Manual deploy
 
