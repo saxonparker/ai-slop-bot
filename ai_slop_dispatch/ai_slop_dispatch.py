@@ -17,6 +17,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot -v [seconds] <prompt>` — video generation (default 10s, max 15s)
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
+  `/slop-bot -c <prompt>` — start a conversation; reply in the thread to continue
   `/slop-bot -b <backend> <prompt>` — use a specific backend
   `/slop-bot -u` — show your usage stats and balance
   `/slop-bot -g` — link to the image gallery
@@ -25,6 +26,14 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Flags can be combined:*
   `/slop-bot -p -i a beautiful sunset` — potato mode image
   `/slop-bot -i -b openai a cat` — image with DALL-E
+
+*Conversations:*
+  `/slop-bot -c <prompt>` starts a multi-turn text conversation rooted in a
+  Slack thread. Anyone can reply in the thread with `/slop-bot <prompt>` (no
+  `-c` needed) to continue. Only `/slop-bot` invocations are part of the
+  transcript — plain Slack messages between turns are invisible to the bot.
+  Conversations are text-only (`-c` cannot combine with `-i` or `-v`) and are
+  capped at ~200 KB of transcript.
 
 *Hidden directives:*
   `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
@@ -68,6 +77,7 @@ def dispatch(event, _):
             "response_url": params["response_url"],
             "channel_id": params.get("channel_id", ""),
             "channel_name": params.get("channel_name", ""),
+            "thread_ts": params.get("thread_ts", ""),
             "prompt": prompt,
             "user": user,
         }

@@ -193,3 +193,49 @@ def test_credit_invalid_amount():
     result = parsing.parse_command("-credit testuser notanumber")
     assert result.credit_target is None
     assert result.credit_amount is None
+
+
+# ── Conversation flag ───────────────────────────────────────────────────────
+
+def test_conversation_short_flag():
+    result = parsing.parse_command("-c hello world")
+    assert result.conversation is True
+    assert result.mode == "text"
+    assert result.display_text == "hello world"
+    assert result.prompt_text == "hello world"
+
+
+def test_conversation_long_flag():
+    result = parsing.parse_command("--conversation hello")
+    assert result.conversation is True
+    assert result.prompt_text == "hello"
+
+
+def test_conversation_position_invariant():
+    result = parsing.parse_command("hello world -c")
+    assert result.conversation is True
+    assert result.prompt_text == "hello world"
+
+
+def test_conversation_with_potato():
+    result = parsing.parse_command("-c -p hello")
+    assert result.conversation is True
+    assert result.potato_mode is True
+
+
+def test_conversation_with_backend():
+    result = parsing.parse_command("-c -b anthropic hello")
+    assert result.conversation is True
+    assert result.backend_override == "anthropic"
+
+
+def test_conversation_distinguished_from_credit():
+    result = parsing.parse_command("-credit testuser 5.00")
+    assert result.conversation is False
+    assert result.credit_target == "testuser"
+    assert result.credit_amount == 5.00
+
+
+def test_default_conversation_false():
+    result = parsing.parse_command("plain prompt")
+    assert result.conversation is False

@@ -31,3 +31,14 @@ resource "aws_dynamodb_table" "ledger" {
     type = "S"
   }
 }
+
+resource "aws_dynamodb_table" "conversations" {
+  name         = "ai-slop-conversations"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "conversation_id"
+
+  attribute {
+    name = "conversation_id"
+    type = "S"
+  }
+}
