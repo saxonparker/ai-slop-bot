@@ -159,8 +159,51 @@ def post_image_response(response_url: str, user: str, display: str, image_url: s
     )
 
 
-def post_video_response(channel_id: str, user: str, display: str, video_bytes: bytes):
-    """Upload a video to Slack and post it to the channel."""
+def post_image_response_in_thread(channel_id: str, user: str, display: str,
+                                  image_url: str, thread_ts: str):
+    """Post an image into a Slack thread via chat.postMessage.
+
+    Used for the events-API path which has no response_url. Mirrors
+    post_image_response's blocks but targets a thread on a channel directly.
+    """
+    token = os.environ["SLACK_BOT_TOKEN"]
+    payload = {
+        "channel": channel_id,
+        "thread_ts": thread_ts,
+        "text": f'{user} generated: "{display}"',
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f'{user} generated: "{display}"',
+                },
+            },
+            {
+                "type": "image",
+                "image_url": image_url,
+                "alt_text": display,
+            },
+        ],
+    }
+    resp = requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        data=json.dumps(payload),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Slack chat.postMessage (image) failed: {data.get('error')}")
+
+
+def post_video_response(channel_id: str, user: str, display: str, video_bytes: bytes,
+                        thread_ts: str | None = None):
+    """Upload a video to Slack and post it to the channel (or a thread)."""
     token = os.environ["SLACK_BOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
     filename = display[:100].replace(" ", "_") + ".mp4"
@@ -189,20 +232,57 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
     print("SLACK UPLOAD: file uploaded")
 
     # Step 3: Complete the upload and share to channel
+    complete_payload = {
+        "files": [{"id": file_id, "title": display}],
+        "channel_id": channel_id,
+        "initial_comment": f'{user} generated video: "{display}"',
+    }
+    if thread_ts:
+        complete_payload["thread_ts"] = thread_ts
     complete_resp = requests.post(
         "https://slack.com/api/files.completeUploadExternal",
         headers={**headers, "Content-Type": "application/json"},
-        json={
-            "files": [{"id": file_id, "title": display}],
-            "channel_id": channel_id,
-            "initial_comment": f'{user} generated video: "{display}"',
-        },
+        json=complete_payload,
         timeout=30,
     )
     complete_data = complete_resp.json()
     if not complete_data.get("ok"):
         raise RuntimeError(f"Slack completeUploadExternal failed: {complete_data.get('error')}")
     print(f"SLACK UPLOAD: shared to channel {channel_id}")
+
+
+def get_user_display_name(user_id: str) -> str:
+    """Resolve a Slack user id to a display name via users.info, or fall back.
+
+    Cosmetic only: used by the events-API path so transcripts read like
+    `aaron asked` instead of `U12345 asked`. Any error returns the user id.
+    """
+    if not user_id:
+        return user_id
+    try:
+        token = os.environ["SLACK_BOT_TOKEN"]
+        resp = requests.get(
+            "https://slack.com/api/users.info",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"user": user_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("ok"):
+            print(f"users.info failed for {user_id}: {data.get('error')}")
+            return user_id
+        profile = (data.get("user") or {}).get("profile") or {}
+        return (
+            profile.get("display_name")
+            or (data.get("user") or {}).get("name")
+            or user_id
+        )
+    # pylint: disable=broad-except
+    except Exception as exc:
+        print(f"users.info exception for {user_id}: {exc}")
+        return user_id
+    # pylint: enable=broad-except
 
 
 def post_ephemeral(response_url: str, text: str = "", blocks: list[dict] | None = None):

@@ -1,5 +1,6 @@
 """Main Lambda handler for ai-slop bot. Routes text vs image generation."""
 
+import dataclasses
 import json
 import sys
 import time
@@ -18,34 +19,54 @@ import usage
 def ai_slop_bot(event, context):
     """Entry point for the Lambda that generates text or images."""
     response_url = None
+    source = "slash"
+    channel_id = ""
+    thread_ts = ""
     lambda_start = time.time()
     try:
         # pylint: disable=broad-except
         print(f"SNS MESSAGE: {event['Records'][0]['Sns']['Message']}")
         message = json.loads(event["Records"][0]["Sns"]["Message"])
-        response_url = message["response_url"]
+        response_url = message.get("response_url", "")
         input_str = message["prompt"]
         user = message["user"]
         channel_id = message.get("channel_id", "")
         channel_name = message.get("channel_name", "")
         thread_ts = message.get("thread_ts", "") or ""
+        source = message.get("source", "slash")
+
+        if source == "event_mention":
+            event_user_id = message.get("event_user_id", "") or user
+            user = slack.get_user_display_name(event_user_id)
 
         parsed = parsing.parse_command(input_str)
+
+        # Events have no concept of "starting a conversation" — the thread
+        # already exists. Strip the -c flag so downstream routing only
+        # branches on existing_conv.
+        if source == "event_mention" and parsed.conversation:
+            parsed = dataclasses.replace(parsed, conversation=False)
 
         if parsed.usage:
             summary = usage.get_usage_summary(user)
             balance_info = budget.get_balance_display(user)
             if isinstance(summary, list):
                 blocks = summary + [{"type": "section", "text": {"type": "mrkdwn", "text": balance_info}}]
-                slack.post_ephemeral(response_url, blocks=blocks)
+                if source == "event_mention":
+                    slack.post_thread_notice(channel_id, thread_ts, _blocks_to_text(blocks))
+                else:
+                    slack.post_ephemeral(response_url, blocks=blocks)
             else:
-                slack.post_ephemeral(response_url, summary + "\n" + balance_info)
+                _notify(summary + "\n" + balance_info, source=source,
+                        response_url=response_url, channel_id=channel_id,
+                        thread_ts=thread_ts)
             return
 
         if parsed.gallery:
-            slack.post_ephemeral(
-                response_url,
+            _notify(
                 ":frame_with_picture: <https://d2jagmvo7k5q5j.cloudfront.net/index.html|AI Slop Gallery>",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
@@ -53,39 +74,48 @@ def ai_slop_bot(event, context):
             amount = parsed.pay_amount
             budget.add_credit(user, amount, source_user=user, note="Venmo payment")
             link = budget.generate_venmo_link(amount)
-            slack.post_ephemeral(
-                response_url,
+            _notify(
                 f":white_check_mark: Credited *${amount:.2f}* to your balance.\n"
                 f"Pay here: <{link}|Pay ${amount:.2f} on Venmo>",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
         if parsed.report:
             if user not in budget.ADMIN_USERS:
-                slack.post_ephemeral(response_url, "Only admins can use -report.")
+                _notify("Only admins can use -report.", source=source,
+                        response_url=response_url, channel_id=channel_id,
+                        thread_ts=thread_ts)
                 return
-            slack.post_ephemeral(response_url, budget.get_all_balances())
+            _notify(budget.get_all_balances(), source=source,
+                    response_url=response_url, channel_id=channel_id,
+                    thread_ts=thread_ts)
             return
 
         if parsed.credit_target is not None:
             if user not in budget.ADMIN_USERS:
-                slack.post_ephemeral(response_url, "Only admins can use -credit.")
+                _notify("Only admins can use -credit.", source=source,
+                        response_url=response_url, channel_id=channel_id,
+                        thread_ts=thread_ts)
                 return
             target = parsed.credit_target
             amount = parsed.credit_amount
             new_bal = budget.add_credit(target, amount, source_user=user,
                                         note="Admin adjustment")
-            slack.post_ephemeral(
-                response_url,
+            _notify(
                 f"Adjusted *{target}* by *${amount:.2f}*. New balance: *${new_bal:.2f}*",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
         if parsed.conversation and parsed.mode in ("image", "video"):
             label = "-i" if parsed.mode == "image" else "-v"
-            slack.post_error(
-                response_url,
+            _notify(
                 f"-c cannot be combined with {label}: conversations are text-only.",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
@@ -98,7 +128,9 @@ def ai_slop_bot(event, context):
             image_upload.upload_to_s3(prompt, result.content, extension="mp4",
                                      user=user, channel=channel_name,
                                      model=result.model)
-            slack.post_video_response(channel_id, user, parsed.display_text, result.content)
+            video_thread_ts = thread_ts if source == "event_mention" else None
+            slack.post_video_response(channel_id, user, parsed.display_text,
+                                      result.content, thread_ts=video_thread_ts)
             usage.record_usage(user, result)
             return
 
@@ -112,40 +144,46 @@ def ai_slop_bot(event, context):
                                           user=user, channel=channel_name,
                                           model=result.model)
             print(f"UPLOAD URL {url}")
-            slack.post_image_response(response_url, user, parsed.display_text, url)
+            if source == "event_mention":
+                slack.post_image_response_in_thread(
+                    channel_id, user, parsed.display_text, url, thread_ts,
+                )
+            else:
+                slack.post_image_response(response_url, user, parsed.display_text, url)
             usage.record_usage(user, result)
             return
 
         # Text mode: route to conversation handler if applicable.
         conv_enabled = conversations.is_enabled()
         if parsed.conversation and not conv_enabled:
-            slack.post_ephemeral(
-                response_url,
-                "Conversations are not enabled in this environment.",
-            )
+            _notify("Conversations are not enabled in this environment.",
+                    source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
             return
 
         existing_conv = None
         if conv_enabled and thread_ts:
             existing_conv = conversations.get(conversations.make_id(channel_id, thread_ts))
 
+        # Event mentions in a thread without a tracked conversation are
+        # ignored silently — the bot may have been mentioned incidentally.
+        if source == "event_mention" and existing_conv is None:
+            print(f"EVENT MENTION: no tracked conversation at "
+                  f"{channel_id}:{thread_ts}, ignoring silently")
+            return
+
         if existing_conv is not None or parsed.conversation:
-            if existing_conv is not None and parsed.conversation:
-                slack.post_ephemeral(
-                    response_url,
-                    "This thread is already a conversation — continuing the existing"
-                    " one rather than starting a new conversation.",
-                )
             request_id = getattr(context, "aws_request_id", None) or "local"
             _handle_conversation_turn(
                 parsed=parsed, user=user, channel_id=channel_id,
-                response_url=response_url, thread_ts=thread_ts,
+                response_url=response_url,
                 existing_conv=existing_conv, request_id=request_id,
-                lambda_start=lambda_start,
+                lambda_start=lambda_start, source=source,
             )
             return
 
-        # Single-shot text path.
+        # Single-shot text path (slash only — events with no conversation
+        # were silently ignored above).
         system = prompts.get_system_message(user, parsed.potato_mode)
         print(f"GENERATE TEXT: {system}, {parsed.prompt_text}")
         provider = providers.get_text_provider(parsed.backend_override)
@@ -157,19 +195,53 @@ def ai_slop_bot(event, context):
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
         traceback.print_exc()
-        if response_url:
-            slack.post_error(response_url, str(exc))
+        _post_error_safe(str(exc), source=source, response_url=response_url,
+                         channel_id=channel_id, thread_ts=thread_ts)
     # pylint: enable=broad-except
 
 
-def _handle_conversation_turn(*, parsed, user, channel_id, response_url, thread_ts,
-                              existing_conv, request_id, lambda_start):
-    """Dispatch to first-turn (top-level or in-thread) or continuation-turn handler."""
+def _notify(text, *, source, response_url, channel_id, thread_ts):
+    """Post an informational message to the user.
+
+    Slash invocations get an ephemeral reply via response_url; event mentions
+    get a thread notice via chat.postMessage.
+    """
+    if source == "event_mention":
+        slack.post_thread_notice(channel_id, thread_ts, text)
+    else:
+        slack.post_ephemeral(response_url, text)
+
+
+def _post_error_safe(text, *, source, response_url, channel_id, thread_ts):
+    """Best-effort error post — never raises into the caller."""
+    try:
+        if source == "event_mention" and channel_id and thread_ts:
+            slack.post_thread_notice(channel_id, thread_ts, text)
+        elif response_url:
+            slack.post_error(response_url, text)
+    # pylint: disable=broad-except
+    except Exception as exc:
+        print(f"ERROR POSTING ERROR: {exc}")
+
+
+def _blocks_to_text(blocks: list) -> str:
+    """Flatten a Slack block list to plain text for thread-notice posting."""
+    parts = []
+    for block in blocks:
+        text_field = block.get("text") or {}
+        text = text_field.get("text") if isinstance(text_field, dict) else None
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _handle_conversation_turn(*, parsed, user, channel_id, response_url,
+                              existing_conv, request_id, lambda_start, source):
+    """Dispatch to first-turn or continuation-turn handler."""
     if existing_conv is None:
         _handle_first_turn(
             parsed=parsed, user=user, channel_id=channel_id,
-            response_url=response_url, thread_ts=thread_ts or None,
-            lambda_start=lambda_start,
+            response_url=response_url, lambda_start=lambda_start,
         )
         return
 
@@ -177,11 +249,13 @@ def _handle_conversation_turn(*, parsed, user, channel_id, response_url, thread_
         parsed=parsed, user=user, response_url=response_url,
         thread_ts=existing_conv.thread_ts, existing_conv=existing_conv,
         request_id=request_id, lambda_start=lambda_start,
+        channel_id=channel_id, source=source,
     )
 
 
-def _handle_first_turn(*, parsed, user, channel_id, response_url, thread_ts, lambda_start):
-    """First turn of a conversation. thread_ts=None → top-level (chat.postMessage to mint ts)."""
+def _handle_first_turn(*, parsed, user, channel_id, response_url, lambda_start):
+    """First turn of a conversation. Always top-level (slash command can't
+    fire inside a thread), so we mint thread_ts via chat.postMessage."""
     effective_system = prompts.get_system_message(user, parsed.potato_mode)
     user_msg = conversations.build_user_message(
         prompt_text=parsed.prompt_text,
@@ -201,72 +275,54 @@ def _handle_first_turn(*, parsed, user, channel_id, response_url, thread_ts, lam
     assistant_msg = conversations.build_assistant_message(result)
     footer = slack.conversation_started_footer(result.backend)
 
-    if thread_ts:
-        # In-thread: thread_ts known; create row first, then post via response_url.
-        conv_id = conversations.make_id(channel_id, thread_ts)
-        try:
-            conversations.create(
-                conversation_id=conv_id,
-                channel_id=channel_id,
-                thread_ts=thread_ts,
-                created_by=user,
-                first_user_msg=user_msg,
-                first_assistant_msg=assistant_msg,
-            )
-        except conversations.ConversationAlreadyExists:
-            slack.post_error(
-                response_url,
-                "Another turn started this conversation first; please retry.",
-            )
-            return
-        slack.post_text_response_in_thread(
-            response_url=response_url, user=user, display=parsed.display_text,
-            response=result.content, thread_ts=thread_ts, footer_blocks=[footer],
+    # chat.postMessage first to mint a thread_ts, then create the row.
+    ts = slack.post_text_chat_postmessage(
+        channel_id=channel_id, user=user, display=parsed.display_text,
+        response=result.content, thread_ts=None, footer_blocks=[footer],
+    )
+    conv_id = conversations.make_id(channel_id, ts)
+    try:
+        conversations.create(
+            conversation_id=conv_id,
+            channel_id=channel_id,
+            thread_ts=ts,
+            created_by=user,
+            first_user_msg=user_msg,
+            first_assistant_msg=assistant_msg,
         )
-    else:
-        # Top-level: chat.postMessage first to mint thread_ts, then create row.
-        ts = slack.post_text_chat_postmessage(
-            channel_id=channel_id, user=user, display=parsed.display_text,
-            response=result.content, thread_ts=None, footer_blocks=[footer],
+    except Exception:
+        # Response already posted to a fresh thread; warn into the thread
+        # so users don't expect continuations to work.
+        slack.post_thread_notice(
+            channel_id=channel_id, thread_ts=ts,
+            text=(
+                ":warning: Could not start conversation tracking — replies in"
+                " this thread won't continue the conversation."
+            ),
         )
-        conv_id = conversations.make_id(channel_id, ts)
-        try:
-            conversations.create(
-                conversation_id=conv_id,
-                channel_id=channel_id,
-                thread_ts=ts,
-                created_by=user,
-                first_user_msg=user_msg,
-                first_assistant_msg=assistant_msg,
-            )
-        except Exception:
-            # Response already posted to a fresh thread; warn into the thread
-            # so users don't expect continuations to work.
-            slack.post_thread_notice(
-                channel_id=channel_id, thread_ts=ts,
-                text=(
-                    ":warning: Could not start conversation tracking — replies in"
-                    " this thread won't continue the conversation."
-                ),
-            )
-            usage.record_usage(user, result)
-            raise
+        usage.record_usage(user, result)
+        raise
 
     usage.record_usage(user, result)
 
 
 def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing_conv,
-                              request_id, lambda_start):
-    """Continuation turn: lock, preflight, replay history, atomic append, post."""
+                              request_id, lambda_start, channel_id="", source="slash"):
+    """Continuation turn: lock, preflight, replay history, atomic append, post.
+
+    `source` selects the posting path: "slash" uses response_url; "event_mention"
+    uses chat.postMessage / thread notices via the bot token.
+    """
     conv_id = existing_conv.conversation_id
     acquired = conversations.acquire_lock(conv_id, request_id)
     if not acquired:
         time.sleep(conversations.LOCK_RETRY_SLEEP_SECONDS)
         acquired = conversations.acquire_lock(conv_id, request_id)
     if not acquired:
-        slack.post_ephemeral(
-            response_url,
+        _continuation_notice(
             "Another turn in this conversation is in flight; try again in a few seconds.",
+            source=source, response_url=response_url,
+            channel_id=channel_id, thread_ts=thread_ts,
         )
         return
 
@@ -280,10 +336,11 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
         if (projected + conversations.ASSISTANT_RESERVE_CHARS
                 > conversations.CONVERSATION_MAX_CHARS
                 or conv.turn_count >= conversations.MAX_TURNS):
-            slack.post_error(
-                response_url,
+            _continuation_error(
                 "This conversation has reached its limit. "
                 "Start a new one with `/slop-bot -c <prompt>`.",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
@@ -303,8 +360,10 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
         api_messages = list(conv.messages) + [user_msg]
 
         if (time.time() - lambda_start) > conversations.IN_HANDLER_ABORT_SECONDS:
-            slack.post_error(
-                response_url, "Aborting before model call to avoid Lambda timeout.",
+            _continuation_error(
+                "Aborting before model call to avoid Lambda timeout.",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
@@ -321,9 +380,10 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
         )
         if not appended:
             print(f"PHANTOM TURN DROPPED: {conv_id} (turn_count moved)")
-            slack.post_error(
-                response_url,
+            _continuation_error(
                 "This conversation was modified by another in-flight turn; please retry.",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
@@ -340,13 +400,37 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
                     ),
                 }],
             }]
-        slack.post_text_response_in_thread(
-            response_url=response_url, user=user, display=parsed.display_text,
-            response=result.content, thread_ts=thread_ts, footer_blocks=footer_blocks,
-        )
+        if source == "event_mention":
+            slack.post_text_chat_postmessage(
+                channel_id=channel_id, user=user, display=parsed.display_text,
+                response=result.content, thread_ts=thread_ts,
+                footer_blocks=footer_blocks,
+            )
+        else:
+            slack.post_text_response_in_thread(
+                response_url=response_url, user=user, display=parsed.display_text,
+                response=result.content, thread_ts=thread_ts,
+                footer_blocks=footer_blocks,
+            )
         usage.record_usage(user, result)
     finally:
         conversations.release_lock(conv_id, request_id)
+
+
+def _continuation_notice(text, *, source, response_url, channel_id, thread_ts):
+    """Soft notice in a continuation context (lock contention)."""
+    if source == "event_mention":
+        slack.post_thread_notice(channel_id, thread_ts, text)
+    else:
+        slack.post_ephemeral(response_url, text)
+
+
+def _continuation_error(text, *, source, response_url, channel_id, thread_ts):
+    """Hard error in a continuation context."""
+    if source == "event_mention":
+        slack.post_thread_notice(channel_id, thread_ts, text)
+    else:
+        slack.post_error(response_url, text)
 
 
 def main():
