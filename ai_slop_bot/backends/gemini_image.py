@@ -12,7 +12,7 @@ class GeminiProvider:
 
     def generate(self, prompt: str) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image-preview")
+        model = os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image")
         response = client.models.generate_content(
             model=model,
             contents=[prompt],

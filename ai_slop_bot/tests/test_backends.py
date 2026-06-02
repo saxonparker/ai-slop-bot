@@ -329,7 +329,7 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     assert isinstance(result, GenerationResult)
     assert result.content == fake_bytes
     assert result.backend == "grok"
-    assert result.cost_estimate == 0.02
+    assert result.cost_estimate == 0.05
     mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
     call_args = mock_client.images.generate.call_args
     assert call_args.kwargs["prompt"].endswith("a cat")
@@ -542,3 +542,77 @@ def test_grok_video_failed_raises(mock_requests):
     with patch("backends.grok_video.time.sleep"):
         with pytest.raises(RuntimeError, match="Video generation failed"):
             GrokProvider().generate("a dancing cat")
+
+
+# ── Gemini Video (Veo) ───────────────────────────────────────────────────────
+
+def _veo_done_op(video):
+    """Build a mock completed Veo operation wrapping a single generated video."""
+    op = MagicMock(done=True, error=None)
+    op.response.generated_videos = [MagicMock(video=video)]
+    return op
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_generate(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    video = MagicMock()
+    mock_client.models.generate_videos.return_value = MagicMock(done=False)
+    mock_client.operations.get.return_value = _veo_done_op(video)
+    fake_bytes = b"\x00\x00\x00\x1cftypisom"
+    mock_client.files.download.return_value = fake_bytes
+
+    with patch("backends.gemini_video.time.sleep"):
+        result = GeminiProvider().generate("a dancing cat")
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "gemini"
+    assert result.model == "veo-3.1-fast-generate-preview"
+    # Default duration (8) snapped, cost = 8s * $0.10
+    assert result.cost_estimate == 8 * 0.10
+    mock_client_cls.assert_called_once_with(api_key="fake-key")
+    call_kwargs = mock_client.models.generate_videos.call_args.kwargs
+    assert call_kwargs["model"] == "veo-3.1-fast-generate-preview"
+    assert call_kwargs["prompt"] == "a dancing cat"
+    assert call_kwargs["config"].duration_seconds == 8
+    mock_client.files.download.assert_called_once_with(file=video)
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_snaps_unsupported_duration(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_videos.return_value = MagicMock(done=False)
+    mock_client.operations.get.return_value = _veo_done_op(MagicMock())
+    mock_client.files.download.return_value = b"vid"
+
+    with patch("backends.gemini_video.time.sleep"):
+        result = GeminiProvider().generate("x", duration=12)
+
+    # 12 is unsupported; snapped down to the max 8s clip.
+    assert result.cost_estimate == 8 * 0.10
+    assert mock_client.models.generate_videos.call_args.kwargs["config"].duration_seconds == 8
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_error_raises(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+    import pytest
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_videos.return_value = MagicMock(done=False)
+    mock_client.operations.get.return_value = MagicMock(done=True, error={"message": "blocked"})
+
+    with patch("backends.gemini_video.time.sleep"):
+        with pytest.raises(RuntimeError, match="Video generation failed"):
+            GeminiProvider().generate("x")

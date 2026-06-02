@@ -28,7 +28,7 @@ class OpenAIProvider:
             api_key=os.environ["OPENAI_API_KEY"],
             organization=os.environ["OPENAI_ORGANIZATION"],
         )
-        model = os.environ.get("TEXT_MODEL", "gpt-5")
+        model = os.environ.get("TEXT_MODEL", "gpt-5.5")
         api_msgs = []
         if len(system) > 0:
             api_msgs.append({"role": "system", "content": system})

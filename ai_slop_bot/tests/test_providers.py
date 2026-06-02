@@ -68,6 +68,7 @@ def test_load_grok_image_provider():
 
 def test_video_registry_has_expected_backends():
     assert "grok" in providers.VIDEO_PROVIDERS
+    assert "gemini" in providers.VIDEO_PROVIDERS
 
 
 def test_unknown_video_backend_raises():
@@ -78,3 +79,8 @@ def test_unknown_video_backend_raises():
 def test_load_grok_video_provider():
     provider = providers.get_video_provider("grok")
     assert type(provider).__name__ == "GrokProvider"
+
+
+def test_load_gemini_video_provider():
+    provider = providers.get_video_provider("gemini")
+    assert type(provider).__name__ == "GeminiProvider"

@@ -32,6 +32,7 @@ TEXT_PROVIDERS = {
 
 VIDEO_PROVIDERS = {
     "grok": "backends.grok_video.GrokProvider",
+    "gemini": "backends.gemini_video.GeminiProvider",
 }
 
 IMAGE_PROVIDERS = {

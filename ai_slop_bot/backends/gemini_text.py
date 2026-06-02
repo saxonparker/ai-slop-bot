@@ -14,7 +14,7 @@ class GeminiProvider:
     def chat(self, system: str, messages: list[dict]) -> GenerationResult:
         """Generate a completion given a multi-turn message history."""
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("TEXT_MODEL", "gemini-3-flash-preview")
+        model = os.environ.get("TEXT_MODEL", "gemini-3.5-flash")
         contents = conversations.to_gemini(messages)
         response = client.models.generate_content(
             model=model,

@@ -14,7 +14,7 @@ class AnthropicProvider:
     def chat(self, system: str, messages: list[dict]) -> GenerationResult:
         """Generate a completion given a multi-turn message history."""
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        model = os.environ.get("TEXT_MODEL", "claude-sonnet-4-20250514")
+        model = os.environ.get("TEXT_MODEL", "claude-sonnet-4-6")
         api_msgs = conversations.to_anthropic(messages)
         message = client.messages.create(
             model=model,

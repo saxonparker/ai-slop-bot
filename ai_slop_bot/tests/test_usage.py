@@ -44,10 +44,10 @@ def test_estimate_text_cost_unknown_backend():
 # ── GenerationResult ─────────────────────────────────────────────────────────
 
 def test_generation_result_text():
-    r = GenerationResult("hello", "anthropic", "claude-sonnet-4-20250514", 10, 20, 0.001)
+    r = GenerationResult("hello", "anthropic", "claude-sonnet-4-6", 10, 20, 0.001)
     assert r.content == "hello"
     assert r.backend == "anthropic"
-    assert r.model == "claude-sonnet-4-20250514"
+    assert r.model == "claude-sonnet-4-6"
 
 
 def test_generation_result_image():
@@ -63,7 +63,7 @@ def test_record_usage_writes_item(mock_boto3):
     mock_table = MagicMock()
     mock_boto3.resource.return_value.Table.return_value = mock_table
 
-    result = GenerationResult("hello", "anthropic", "claude-sonnet-4-20250514", 100, 200, 0.0033)
+    result = GenerationResult("hello", "anthropic", "claude-sonnet-4-6", 100, 200, 0.0033)
     record_usage("testuser", result)
 
     mock_table.put_item.assert_called_once()
@@ -71,7 +71,7 @@ def test_record_usage_writes_item(mock_boto3):
     assert item["user"] == "testuser"
     assert item["mode"] == "text"
     assert item["backend"] == "anthropic"
-    assert item["model"] == "claude-sonnet-4-20250514"
+    assert item["model"] == "claude-sonnet-4-6"
     assert item["input_tokens"] == 100
     assert item["output_tokens"] == 200
     assert isinstance(item["cost_estimate"], Decimal)
@@ -95,6 +95,19 @@ def test_record_usage_video_mode(mock_boto3):
     mock_boto3.resource.return_value.Table.return_value = mock_table
 
     result = GenerationResult(b"\x00\x00\x00\x1cftypisom", "grok", "grok-imagine-video", 0, 0, 0.40)
+    record_usage("testuser", result)
+
+    item = mock_table.put_item.call_args.kwargs["Item"]
+    assert item["mode"] == "video"
+
+
+@patch("usage.boto3")
+def test_record_usage_veo_video_mode(mock_boto3):
+    mock_table = MagicMock()
+    mock_boto3.resource.return_value.Table.return_value = mock_table
+
+    # Veo bytes look like image bytes, so the model name must mark it as video.
+    result = GenerationResult(b"\x00\x00\x00\x1cftypisom", "gemini", "veo-3.1-fast-generate-preview", 0, 0, 1.20)
     record_usage("testuser", result)
 
     item = mock_table.put_item.call_args.kwargs["Item"]

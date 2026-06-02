@@ -23,7 +23,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Usage:*
   `/slop-bot <prompt>` — text response
   `/slop-bot -i <prompt>` — image generation
-  `/slop-bot -v [seconds] <prompt>` — video generation (default 10s, max 15s)
+  `/slop-bot -v [seconds] <prompt>` — video generation (Grok: default 10s, max 15s; Veo: 4/6/8s)
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -c <prompt>` — start a conversation; reply with `@slop-bot <prompt>` in the thread to continue
@@ -35,6 +35,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Flags can be combined:*
   `/slop-bot -p -i a beautiful sunset` — potato mode image
   `/slop-bot -i -b openai a cat` — image with DALL-E
+  `/slop-bot -v -b gemini a corgi surfing` — video with Veo (native audio/dialogue)
 
 *Conversations:*
   `/slop-bot -c <prompt>` starts a multi-turn text conversation rooted in a
@@ -49,7 +50,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 *Backends:*
   Text: `gemini` (default), `anthropic`, `openai`, `grok`
   Image: `grok` (default), `gemini`, `openai`
-  Video: `grok` (default)"""
+  Video: `grok` (default), `gemini` (Veo 3.1)"""
 
 
 # Matches a leading Slack user mention like `<@U12345>` or `<@U12345|name>`.

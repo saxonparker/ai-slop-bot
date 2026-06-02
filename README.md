@@ -13,6 +13,7 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 - `/ai-slop -b gemini <prompt>` — text with specific backend
 - `/ai-slop -i -b openai <prompt>` — image with specific backend (DALL-E)
 - `/ai-slop -v -b grok <prompt>` — video with specific backend
+- `/ai-slop -v -b gemini <prompt>` — video with Veo (native audio/dialogue)
 - `[hidden directive]` syntax hides instructions from display
 
 Slack does not allow slash commands inside threads, so conversation
@@ -26,16 +27,17 @@ Two-Lambda architecture:
 
 ## Backends
 
-| Type  | Backend    | Provider                    | Default |
-|-------|------------|-----------------------------|---------|
-| Text  | anthropic  | Claude                      | Yes     |
-| Text  | gemini     | Gemini                      |         |
-| Text  | openai     | ChatGPT                     |         |
-| Text  | grok       | Grok (grok-4-1-fast)        |         |
-| Image | gemini     | Nano Banana                 | Yes     |
-| Image | openai     | DALL-E 3                    |         |
-| Image | grok       | Grok Imagine                |         |
-| Video | grok       | Grok Imagine Video          | Yes     |
+| Type  | Backend    | Provider                          | Default |
+|-------|------------|-----------------------------------|---------|
+| Text  | anthropic  | Claude (claude-sonnet-4-6)        |         |
+| Text  | gemini     | Gemini (gemini-3.5-flash)         | Yes     |
+| Text  | openai     | ChatGPT (gpt-5.5)                 |         |
+| Text  | grok       | Grok (grok-4-1-fast)              |         |
+| Image | gemini     | Nano Banana 2 (gemini-3.1-flash-image) |    |
+| Image | openai     | DALL-E 3                          |         |
+| Image | grok       | Grok Imagine (quality)            | Yes     |
+| Video | grok       | Grok Imagine Video                | Yes     |
+| Video | gemini     | Veo 3.1 Fast (with audio)         |         |
 
 ## Environment Variables
 
@@ -46,8 +48,8 @@ Two-Lambda architecture:
 | `IMAGE_BACKEND` | `grok` | Default image provider |
 | `VIDEO_BACKEND` | `grok` | Default video provider |
 | `TEXT_MODEL` | varies by backend | Model name override |
-| `IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Model name override |
-| `VIDEO_MODEL` | `grok-imagine-video` | Model name override |
+| `IMAGE_MODEL` | varies by backend | Model name override |
+| `VIDEO_MODEL` | varies by backend (`grok-imagine-video` / `veo-3.1-fast-generate-preview`) | Model name override |
 | `ANTHROPIC_API_KEY` | — | Required if using anthropic backend |
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
 | `OPENAI_API_KEY` | — | Required if using openai backends |

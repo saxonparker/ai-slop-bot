@@ -27,12 +27,13 @@ COST_PER_MILLION_TOKENS = {
 
 COST_PER_VIDEO = {
     "grok": 0.05,  # per second of video
+    "gemini": 0.10,  # Veo 3.1 Fast @ 720p, per second (incl. audio)
 }
 
 COST_PER_IMAGE = {
     "gemini": 0.04,
     "openai": 0.08,
-    "grok": 0.02,
+    "grok": 0.05,  # grok-imagine-image-quality
 }
 
 
@@ -49,13 +50,18 @@ def _get_table():
     return boto3.resource("dynamodb").Table(table_name)
 
 
-VIDEO_MODELS = {"grok-imagine-video"}
+VIDEO_MODELS = {"grok-imagine-video", "veo-3.1-fast-generate-preview"}
+
+
+def _is_video_model(model: str) -> bool:
+    """Video and image content are both bytes, so the model name disambiguates."""
+    return model in VIDEO_MODELS or model.startswith("veo")
 
 
 def record_usage(user: str, result: GenerationResult):
     """Write a usage record to DynamoDB. Failures are logged but never propagated."""
     try:
-        if result.model in VIDEO_MODELS:
+        if _is_video_model(result.model):
             mode = "video"
         elif isinstance(result.content, bytes):
             mode = "image"

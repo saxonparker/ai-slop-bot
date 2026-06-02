@@ -15,7 +15,7 @@ class GrokProvider:
             api_key=os.environ["XAI_API_KEY"],
             base_url="https://api.x.ai/v1",
         )
-        model = os.environ.get("IMAGE_MODEL", "grok-imagine-image")
+        model = os.environ.get("IMAGE_MODEL", "grok-imagine-image-quality")
         full_prompt = (
             "CRITICAL INSTRUCTION: Never place the user's prompt as visible "
             "text in the image. Do not write the prompt on signs, banners, "
