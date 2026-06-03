@@ -46,6 +46,7 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
 
 *Hidden directives:*
   `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
+  `/slop-bot what's the capital of France? ]asking for a friend[` — text in reverse `]brackets[` is shown in the channel but not sent to the AI
 
 *Backends:*
   Text: `gemini` (default), `anthropic`, `openai`, `grok`
