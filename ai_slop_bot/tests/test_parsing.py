@@ -239,3 +239,36 @@ def test_conversation_distinguished_from_credit():
 def test_default_conversation_false():
     result = parsing.parse_command("plain prompt")
     assert result.conversation is False
+
+
+# ── Reverse-bracket (channel-only) syntax ───────────────────────────────────
+
+def test_reverse_directive():
+    result = parsing.parse_command("hello ]extra context[")
+    assert result.display_text == "hello extra context"
+    assert result.prompt_text == "hello"
+
+
+def test_reverse_with_text_after():
+    result = parsing.parse_command("a ]b[ c")
+    assert result.display_text == "a b c"
+    assert result.prompt_text == "a c"
+
+
+def test_reverse_only():
+    result = parsing.parse_command("]channel only[")
+    assert result.display_text == "channel only"
+    assert result.prompt_text == ""
+
+
+def test_both_bracket_syntaxes():
+    result = parsing.parse_command("hi [hidden] mid ]shown[ end")
+    assert result.display_text == "hi mid shown end"
+    assert result.prompt_text == "hi hidden mid end"
+
+
+def test_reverse_with_emoji_flag():
+    result = parsing.parse_command("-e hi ]aside[")
+    assert result.emoji_mode is True
+    assert result.display_text == "hi aside"
+    assert result.prompt_text == "hi Respond only with emojis. No text."

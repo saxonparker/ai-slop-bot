@@ -100,15 +100,58 @@ def parse_command(input_str: str) -> ParsedCommand:
     if emoji_mode:
         text += " [Respond only with emojis. No text.]"
 
-    # Parse [hidden directive] syntax
-    split_text = text.split("[")
-    display_text = split_text[0].strip()
-    if len(split_text) > 1:
-        right_split = split_text[1].split("]")
-        if len(right_split) > 1:
-            display_text += right_split[1]
+    # Parse [hidden] (sent to LLM, stripped from channel display) and
+    # ]shown[ (shown in channel, stripped from LLM input) via a single
+    # left-to-right walk so the closing ] of a [hidden] pair isn't
+    # mistaken for the opening of a ]shown[ pair.
+    segments: list[tuple[str, str]] = []
+    state = "neutral"
+    buf = ""
+    for ch in text:
+        if state == "neutral":
+            if ch == "[":
+                if buf:
+                    segments.append(("normal", buf))
+                    buf = ""
+                state = "hidden"
+            elif ch == "]":
+                if buf:
+                    segments.append(("normal", buf))
+                    buf = ""
+                state = "shown"
+            else:
+                buf += ch
+        elif state == "hidden":
+            if ch == "]":
+                segments.append(("hidden", buf))
+                buf = ""
+                state = "neutral"
+            else:
+                buf += ch
+        else:  # state == "shown"
+            if ch == "[":
+                segments.append(("shown", buf))
+                buf = ""
+                state = "neutral"
+            else:
+                buf += ch
 
-    prompt_text = text.replace("[", "").replace("]", "")
+    if state == "hidden":
+        # Lone [ with no closing ]: drop from display, keep in prompt.
+        segments.append(("hidden", buf))
+    elif state == "shown":
+        # Lone ] with no closing [: revert. The ] survives in display
+        # as a literal and is stripped from prompt by the final replace.
+        segments.append(("normal", "]" + buf))
+    elif buf:
+        segments.append(("normal", buf))
+
+    display_text = "".join(c for t, c in segments if t in ("normal", "shown"))
+    prompt_text = "".join(c for t, c in segments if t in ("normal", "hidden"))
+    prompt_text = prompt_text.replace("[", "").replace("]", "")
+
+    display_text = " ".join(display_text.split())
+    prompt_text = " ".join(prompt_text.split())
 
     mode = "video" if video_mode else "image" if image_mode else "text"
     return ParsedCommand(
