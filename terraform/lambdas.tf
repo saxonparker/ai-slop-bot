@@ -89,7 +89,10 @@ resource "aws_lambda_function" "dispatch" {
   handler          = "ai_slop_dispatch.dispatch"
   runtime          = "python3.12"
   timeout          = 10
-  memory_size      = 128
+  # CPU scales with memory; 128 MB starved the cold start past Slack's 3s
+  # slash-command ACK deadline. 512 MB ~4x the CPU and is still ~free at
+  # this invocation volume.
+  memory_size      = 512
   filename         = var.dispatch_zip_path
   source_code_hash = filebase64sha256(var.dispatch_zip_path)
 
