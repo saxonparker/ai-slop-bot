@@ -99,6 +99,7 @@ resource "aws_lambda_function" "dispatch" {
   environment {
     variables = {
       AI_SLOP_SNS_TOPIC = aws_sns_topic.ai_slop.arn
+      SLACK_BOT_TOKEN   = var.slack_bot_token
     }
   }
 }
@@ -121,6 +122,7 @@ resource "aws_lambda_function" "bot" {
       ANTHROPIC_API_KEY        = var.anthropic_api_key
       GOOGLE_API_KEY           = var.google_api_key
       OPENAI_API_KEY           = var.openai_api_key
+      OPENAI_IMAGE_EDIT_MODEL  = var.openai_image_edit_model
       OPENAI_ORGANIZATION      = var.openai_organization
       XAI_API_KEY              = var.xai_api_key
       SLACK_BOT_TOKEN          = var.slack_bot_token

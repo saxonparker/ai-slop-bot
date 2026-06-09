@@ -9,6 +9,7 @@ import traceback
 import budget
 import conversations
 import image_upload
+import media_refs
 import parsing
 import prompts
 import providers
@@ -40,6 +41,22 @@ def ai_slop_bot(event, context):
             user = slack.get_user_display_name(event_user_id)
 
         parsed = parsing.parse_command(input_str)
+        payload_references = [
+            media_refs.ReferenceImage.from_payload(ref)
+            for ref in message.get("reference_images", [])
+        ]
+        source_ref, reference_refs = _collect_media_references(parsed, payload_references)
+        validation_error = _validate_media_references(parsed, source_ref, reference_refs)
+        if validation_error:
+            _notify(validation_error, source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
+            return
+
+        if parsed.upload_requested:
+            _notify("--upload can only be used from the slash command composer.",
+                    source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
+            return
 
         # Events have no concept of "starting a conversation" — the thread
         # already exists. Strip the -c flag so downstream routing only
@@ -123,7 +140,17 @@ def ai_slop_bot(event, context):
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE VIDEO: {prompt}")
             provider = providers.get_video_provider(parsed.backend_override)
-            result = provider.generate(prompt, duration=parsed.video_duration)
+            source_image = (
+                media_refs.resolve_reference_image(source_ref)
+                if source_ref else None
+            )
+            references = media_refs.resolve_reference_images(reference_refs)
+            result = provider.generate(
+                prompt,
+                duration=parsed.video_duration,
+                source_image=source_image,
+                references=references,
+            )
             print("GENERATE VIDEO COMPLETE")
             image_upload.upload_to_s3(prompt, result.content, extension="mp4",
                                      user=user, channel=channel_name,
@@ -138,7 +165,8 @@ def ai_slop_bot(event, context):
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE IMAGE: {prompt}")
             provider = providers.get_image_provider(parsed.backend_override)
-            result = provider.generate(prompt)
+            references = media_refs.resolve_reference_images(reference_refs)
+            result = provider.generate(prompt, references=references)
             print("GENERATE IMAGE COMPLETE")
             url = image_upload.upload_to_s3(prompt, result.content,
                                           user=user, channel=channel_name,
@@ -233,6 +261,47 @@ def _blocks_to_text(blocks: list) -> str:
         if text:
             parts.append(text)
     return "\n".join(parts)
+
+
+def _collect_media_references(parsed, payload_references: list[media_refs.ReferenceImage]):
+    """Combine references parsed from command text and Slack modal payloads."""
+    source_ref = parsed.source_image
+    references = list(parsed.reference_images)
+    extra_starts = []
+    for reference in payload_references:
+        if reference.role == "start":
+            extra_starts.append(reference)
+        else:
+            references.append(reference)
+    if extra_starts:
+        if source_ref is None and len(extra_starts) == 1:
+            source_ref = extra_starts[0]
+        else:
+            references.extend(extra_starts)
+    return source_ref, references
+
+
+def _validate_media_references(parsed, source_ref, reference_refs) -> str | None:
+    """Return a user-facing validation error for unsupported media combinations."""
+    has_references = bool(source_ref or reference_refs)
+    if not has_references:
+        return None
+    if parsed.mode == "text":
+        return "Reference images can only be used with -i or -v."
+    if parsed.mode == "image":
+        if source_ref:
+            return "--start can only be used with -v."
+        if len(reference_refs) > 3:
+            return "Image generation supports at most 3 reference images."
+        return None
+    if parsed.mode == "video":
+        if any(ref.role == "edit" for ref in reference_refs):
+            return "--edit can only be used with -i."
+        if source_ref and reference_refs:
+            return "--start cannot be combined with --ref for a video request."
+        if len(reference_refs) > 7:
+            return "Video generation supports at most 7 reference images."
+    return None
 
 
 def _handle_conversation_turn(*, parsed, user, channel_id, response_url,
@@ -453,7 +522,15 @@ def main():
     if parsed.mode == "video":
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_video_provider(parsed.backend_override)
-        result = provider.generate(prompt, duration=parsed.video_duration)
+        source_ref, reference_refs = _collect_media_references(parsed, [])
+        source_image = media_refs.resolve_reference_image(source_ref) if source_ref else None
+        references = media_refs.resolve_reference_images(reference_refs)
+        result = provider.generate(
+            prompt,
+            duration=parsed.video_duration,
+            source_image=source_image,
+            references=references,
+        )
         outfile = "/tmp/claude-1000/ai_slop_output.mp4"
         with open(outfile, "wb") as f:
             f.write(result.content)
@@ -461,7 +538,9 @@ def main():
     elif parsed.mode == "image":
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_image_provider(parsed.backend_override)
-        result = provider.generate(prompt)
+        _source_ref, reference_refs = _collect_media_references(parsed, [])
+        references = media_refs.resolve_reference_images(reference_refs)
+        result = provider.generate(prompt, references=references)
         outfile = "/tmp/claude-1000/ai_slop_output.png"
         with open(outfile, "wb") as f:
             f.write(result.content)

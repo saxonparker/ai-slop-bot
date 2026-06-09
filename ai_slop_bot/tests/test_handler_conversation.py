@@ -17,6 +17,7 @@ sys.path.append(".")
 
 import ai_slop_bot  # noqa: E402  pylint: disable=wrong-import-position
 import conversations  # noqa: E402  pylint: disable=wrong-import-position
+from media_refs import ResolvedImage  # noqa: E402  pylint: disable=wrong-import-position
 from parsing import ParsedCommand  # noqa: E402  pylint: disable=wrong-import-position
 
 
@@ -403,6 +404,68 @@ def test_event_mention_image_posts_in_thread(
     assert args[1] == "alice"
     assert args[4] == "1700.0"
     mock_slack.post_image_response.assert_not_called()
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_image_provider")
+@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://img/url")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+@patch("ai_slop_bot.media_refs.resolve_reference_images")
+def test_image_payload_references_are_resolved_and_passed_to_provider(
+    mock_resolve, _mock_sanitize, _mock_upload, mock_get_provider, _mock_slack,
+    _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"img-bytes")
+    mock_get_provider.return_value = provider
+    resolved = [ResolvedImage(data=b"ref", mime_type="image/jpeg")]
+    mock_resolve.return_value = resolved
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "", "prompt": "-i make art", "user": "alice",
+        "source": "slash",
+        "reference_images": [{"source": "slack_file", "value": "F123", "role": "edit"}],
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    provider.generate.assert_called_once_with("make art", references=resolved)
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_video_provider")
+@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+@patch("ai_slop_bot.media_refs.resolve_reference_images", return_value=[])
+@patch("ai_slop_bot.media_refs.resolve_reference_image")
+def test_video_start_image_is_resolved_and_passed_to_provider(
+    mock_resolve_one, _mock_resolve_many, _mock_sanitize, _mock_upload,
+    mock_get_provider, _mock_slack, _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"video-bytes")
+    mock_get_provider.return_value = provider
+    resolved = ResolvedImage(data=b"ref", mime_type="image/jpeg")
+    mock_resolve_one.return_value = resolved
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "", "prompt": "-v 10 make it move", "user": "alice",
+        "source": "slash",
+        "reference_images": [{"source": "slack_file", "value": "F123", "role": "start"}],
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    provider.generate.assert_called_once_with(
+        "make it move",
+        duration=10,
+        source_image=resolved,
+        references=[],
+    )
 
 
 @patch("ai_slop_bot.usage.record_usage")

@@ -4,6 +4,7 @@ import importlib
 import os
 from typing import Protocol
 
+from media_refs import ResolvedImage
 from usage import GenerationResult
 
 
@@ -15,12 +16,14 @@ class TextProvider(Protocol):
 
 class ImageProvider(Protocol):
     """Interface for image generation backends."""
-    def generate(self, prompt: str) -> GenerationResult: ...
+    def generate(self, prompt: str, references: list[ResolvedImage] | None = None) -> GenerationResult: ...
 
 
 class VideoProvider(Protocol):
     """Interface for video generation backends."""
-    def generate(self, prompt: str, duration: int | None = None) -> GenerationResult: ...
+    def generate(self, prompt: str, duration: int | None = None,
+                 source_image: ResolvedImage | None = None,
+                 references: list[ResolvedImage] | None = None) -> GenerationResult: ...
 
 
 TEXT_PROVIDERS = {

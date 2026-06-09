@@ -15,20 +15,36 @@ MAX_POLL_ATTEMPTS = 120
 class GrokProvider:
     """Video generation using xAI Grok."""
 
-    def generate(self, prompt: str, duration: int | None = None) -> GenerationResult:
+    def generate(self, prompt: str, duration: int | None = None,
+                 source_image=None, references: list | None = None) -> GenerationResult:
         api_key = os.environ["XAI_API_KEY"]
         model = os.environ.get("VIDEO_MODEL", "grok-imagine-video")
         duration = duration or int(os.environ.get("VIDEO_DURATION", "10"))
+        references = references or []
+        if source_image and references:
+            raise ValueError("Grok video supports either a start image or reference images, not both.")
+        if references and len(references) > 7:
+            raise ValueError("Grok reference-to-video supports at most 7 reference images.")
+        if references and duration > 10:
+            raise ValueError("Grok reference-to-video supports a maximum duration of 10 seconds.")
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
+        payload = {"model": model, "prompt": prompt, "duration": duration}
+        if source_image:
+            payload["image"] = {"url": source_image.provider_url()}
+        if references:
+            payload["reference_images"] = [
+                {"url": reference.provider_url()}
+                for reference in references
+            ]
 
         # Submit generation request
         resp = requests.post(
             f"{BASE_URL}/videos/generations",
             headers=headers,
-            json={"model": model, "prompt": prompt, "duration": duration},
+            json=payload,
             timeout=30,
         )
         resp.raise_for_status()

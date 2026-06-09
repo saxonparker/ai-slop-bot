@@ -10,12 +10,20 @@ from usage import GenerationResult, COST_PER_IMAGE
 class GeminiProvider:
     """Image generation using Google Gemini Nano Banana."""
 
-    def generate(self, prompt: str) -> GenerationResult:
+    def generate(self, prompt: str, references: list | None = None) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         model = os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image")
+        contents = [prompt]
+        for reference in references or []:
+            contents.append(
+                types.Part.from_bytes(
+                    data=reference.data,
+                    mime_type=reference.mime_type,
+                )
+            )
         response = client.models.generate_content(
             model=model,
-            contents=[prompt],
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE", "TEXT"],
             ),

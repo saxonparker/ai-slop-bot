@@ -1,5 +1,6 @@
 """xAI Grok image generation backend."""
 
+import base64
 import os
 
 from openai import OpenAI
@@ -7,13 +8,20 @@ import requests
 from usage import GenerationResult, COST_PER_IMAGE
 
 
+BASE_URL = "https://api.x.ai/v1"
+
+
 class GrokProvider:
     """Image generation using xAI Grok."""
 
-    def generate(self, prompt: str) -> GenerationResult:
+    def generate(self, prompt: str, references: list | None = None) -> GenerationResult:
+        references = references or []
+        if references:
+            return self._edit(prompt, references)
+
         client = OpenAI(
             api_key=os.environ["XAI_API_KEY"],
-            base_url="https://api.x.ai/v1",
+            base_url=BASE_URL,
         )
         model = os.environ.get("IMAGE_MODEL", "grok-imagine-image-quality")
         full_prompt = (
@@ -35,4 +43,52 @@ class GrokProvider:
             input_tokens=0,
             output_tokens=0,
             cost_estimate=COST_PER_IMAGE["grok"],
+        )
+
+    def _edit(self, prompt: str, references: list) -> GenerationResult:
+        """Use xAI's JSON image edit endpoint for one or more reference images."""
+        if len(references) > 3:
+            raise ValueError("Grok image editing supports at most 3 reference images.")
+
+        api_key = os.environ["XAI_API_KEY"]
+        model = os.environ.get("IMAGE_MODEL", "grok-imagine-image-quality")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        payload = {
+            "model": model,
+            "prompt": prompt,
+        }
+        image_payloads = [
+            {"type": "image_url", "url": reference.provider_url()}
+            for reference in references
+        ]
+        if len(image_payloads) == 1:
+            payload["image"] = image_payloads[0]
+        else:
+            payload["images"] = image_payloads
+
+        response = requests.post(
+            f"{BASE_URL}/images/edits",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        image = data["data"][0]
+        if image.get("url"):
+            image_response = requests.get(image["url"], timeout=10000)
+            image_response.raise_for_status()
+            content = image_response.content
+        else:
+            content = base64.b64decode(image["b64_json"])
+        return GenerationResult(
+            content=content,
+            backend="grok",
+            model=model,
+            input_tokens=0,
+            output_tokens=0,
+            cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
         )

@@ -11,7 +11,8 @@ import ai_slop_dispatch  # noqa: E402  pylint: disable=wrong-import-position
 
 
 def _slack_event(text: str, user="alice", channel_id="C123",
-                 channel_name="general", thread_ts: str | None = None):
+                 channel_name="general", thread_ts: str | None = None,
+                 trigger_id: str | None = None):
     body_params = {
         "text": text,
         "user_name": user,
@@ -21,6 +22,8 @@ def _slack_event(text: str, user="alice", channel_id="C123",
     }
     if thread_ts is not None:
         body_params["thread_ts"] = thread_ts
+    if trigger_id is not None:
+        body_params["trigger_id"] = trigger_id
     return {"body": urllib.parse.urlencode(body_params)}
 
 
@@ -198,3 +201,79 @@ def test_slash_command_publishes_with_source_slash(mock_boto):
     inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
     sns_msg = json.loads(inner["default"])
     assert sns_msg["source"] == "slash"
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_slash_command_opens_modal(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+
+    response = ai_slop_dispatch.dispatch(
+        _slack_event("-v 10 -b grok --upload make it move", trigger_id="trig"),
+        None,
+    )
+
+    assert response["statusCode"] == "200"
+    mock_boto.return_value.publish.assert_not_called()
+    request = mock_urlopen.call_args.args[0]
+    payload = json.loads(request.data.decode("utf-8"))
+    assert payload["trigger_id"] == "trig"
+    view = payload["view"]
+    assert view["callback_id"] == "ai_slop_upload"
+    metadata = json.loads(view["private_metadata"])
+    assert metadata["mode"] == "video"
+
+
+def _interaction_request(payload: dict):
+    return {
+        "path": "/slack/interactions",
+        "body": urllib.parse.urlencode({"payload": json.dumps(payload)}),
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_publishes_sns(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+    mock_sns.publish.return_value = {"MessageId": "abc"}
+    metadata = {
+        "response_url": "https://hooks.slack.example/dispatch",
+        "channel_id": "C123",
+        "channel_name": "general",
+        "user": "alice",
+        "mode": "video",
+    }
+    payload = {
+        "type": "view_submission",
+        "view": {
+            "callback_id": "ai_slop_upload",
+            "private_metadata": json.dumps(metadata),
+            "state": {
+                "values": {
+                    "prompt_block": {"prompt": {"value": "slow push in"}},
+                    "backend_block": {"backend": {"selected_option": {"value": "grok"}}},
+                    "duration_block": {"duration": {"value": "10"}},
+                    "reference_role_block": {
+                        "reference_role": {"selected_option": {"value": "start"}}
+                    },
+                    "files_block": {"files": {"files": [{"id": "F123"}]}},
+                }
+            },
+        },
+    }
+
+    response = ai_slop_dispatch.dispatch(_interaction_request(payload), None)
+
+    assert response["statusCode"] == "200"
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    sns_msg = json.loads(inner["default"])
+    assert sns_msg["prompt"] == "-v 10 -b grok slow push in"
+    assert sns_msg["reference_images"] == [
+        {"source": "slack_file", "value": "F123", "role": "start"}
+    ]

@@ -18,6 +18,11 @@ variable "openai_organization" {
   sensitive = true
 }
 
+variable "openai_image_edit_model" {
+  type    = string
+  default = "gpt-image-2"
+}
+
 variable "xai_api_key" {
   type      = string
   sensitive = true

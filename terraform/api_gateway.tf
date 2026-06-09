@@ -28,6 +28,12 @@ resource "aws_apigatewayv2_route" "post_slack_events" {
   target    = "integrations/${aws_apigatewayv2_integration.dispatch.id}"
 }
 
+resource "aws_apigatewayv2_route" "post_slack_interactions" {
+  api_id    = aws_apigatewayv2_api.ai_slop.id
+  route_key = "POST /slack/interactions"
+  target    = "integrations/${aws_apigatewayv2_integration.dispatch.id}"
+}
+
 resource "aws_lambda_permission" "apigw_invoke_dispatch" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"

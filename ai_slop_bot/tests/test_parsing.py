@@ -272,3 +272,40 @@ def test_reverse_with_emoji_flag():
     assert result.emoji_mode is True
     assert result.display_text == "hi aside"
     assert result.prompt_text == "hi Respond only with emojis. No text."
+
+
+# ── Reference image flags ───────────────────────────────────────────────────
+
+def test_image_edit_reference_url():
+    result = parsing.parse_command("-i --edit https://example.com/cat.png make it watercolor")
+    assert result.mode == "image"
+    assert result.prompt_text == "make it watercolor"
+    assert len(result.reference_images) == 1
+    assert result.reference_images[0].role == "edit"
+    assert result.reference_images[0].value == "https://example.com/cat.png"
+
+
+def test_video_start_reference_url():
+    result = parsing.parse_command("-v --start https://example.com/frame.jpg slow push in")
+    assert result.mode == "video"
+    assert result.prompt_text == "slow push in"
+    assert result.source_image.role == "start"
+    assert result.source_image.value == "https://example.com/frame.jpg"
+
+
+def test_repeatable_reference_urls_and_slack_escaped_url():
+    result = parsing.parse_command(
+        "-v --ref <https://example.com/a.png|a> --ref https://example.com/b.png combine"
+    )
+    assert result.mode == "video"
+    assert result.prompt_text == "combine"
+    assert [ref.value for ref in result.reference_images] == [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+    ]
+
+
+def test_upload_flag():
+    result = parsing.parse_command("-i --upload make something")
+    assert result.upload_requested is True
+    assert result.prompt_text == "make something"

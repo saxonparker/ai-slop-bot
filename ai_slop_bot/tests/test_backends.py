@@ -2,9 +2,11 @@
 
 import sys
 from unittest.mock import MagicMock, patch
+import base64
 
 sys.path.append(".")
 
+from media_refs import ResolvedImage
 from usage import GenerationResult
 
 
@@ -225,6 +227,28 @@ def test_gemini_image_no_image_raises(mock_client_cls):
         GeminiProvider().generate("a sunset")
 
 
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_image.genai.Client")
+def test_gemini_image_with_reference(mock_client_cls):
+    from backends.gemini_image import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    fake_bytes = b"\x89PNG fake image data"
+    mock_part = MagicMock()
+    mock_part.inline_data = MagicMock(data=fake_bytes)
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_client.models.generate_content.return_value = MagicMock(candidates=[mock_candidate])
+
+    reference = ResolvedImage(data=b"ref", mime_type="image/jpeg")
+    GeminiProvider().generate("make art", references=[reference])
+
+    contents = mock_client.models.generate_content.call_args.kwargs["contents"]
+    assert contents[0] == "make art"
+    assert len(contents) == 2
+
+
 # ── OpenAI Image ─────────────────────────────────────────────────────────────
 
 @patch.dict("os.environ", {"OPENAI_ORGANIZATION": "fake-org", "OPENAI_API_KEY": "fake-key"})
@@ -252,6 +276,29 @@ def test_openai_image_generate(mock_openai_cls, mock_requests_get):
         prompt="a cat", n=1, size="1024x1024", model="dall-e-3", quality="hd"
     )
     mock_requests_get.assert_called_once_with("https://fake-url.com/image.png", timeout=10000)
+
+
+@patch.dict("os.environ", {"OPENAI_ORGANIZATION": "fake-org", "OPENAI_API_KEY": "fake-key"})
+@patch("backends.openai_image.OpenAI")
+def test_openai_image_edit_with_reference(mock_openai_cls):
+    from backends.openai_image import OpenAIProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    encoded = base64.b64encode(b"edited").decode("ascii")
+    mock_client.images.edit.return_value = MagicMock(data=[MagicMock(b64_json=encoded)])
+
+    result = OpenAIProvider().generate(
+        "make art",
+        references=[ResolvedImage(data=b"ref", mime_type="image/jpeg")],
+    )
+
+    assert result.content == b"edited"
+    assert result.model == "gpt-image-2"
+    mock_client.images.generate.assert_not_called()
+    edit_kwargs = mock_client.images.edit.call_args.kwargs
+    assert edit_kwargs["model"] == "gpt-image-2"
+    assert edit_kwargs["prompt"] == "make art"
 
 
 # ── Grok Text ───────────────────────────────────────────────────────────────
@@ -337,6 +384,27 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     mock_requests_get.assert_called_once_with("https://fake-url.com/grok-image.png", timeout=10000)
 
 
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_image.requests")
+def test_grok_image_edit_with_reference(mock_requests):
+    from backends.grok_image import GrokProvider
+
+    mock_post = MagicMock()
+    mock_post.json.return_value = {"data": [{"url": "https://fake-url.com/edited.png"}]}
+    mock_post.raise_for_status = MagicMock()
+    mock_download = MagicMock(content=b"edited", raise_for_status=MagicMock())
+    mock_requests.post.return_value = mock_post
+    mock_requests.get.return_value = mock_download
+
+    reference = ResolvedImage(data=b"ref", mime_type="image/jpeg", original_url="https://example.com/ref.jpg")
+    result = GrokProvider().generate("make it pop", references=[reference])
+
+    assert result.content == b"edited"
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["image"]["url"] == "https://example.com/ref.jpg"
+    assert payload["prompt"] == "make it pop"
+
+
 # ── Grok Video ──────────────────────────────────────────────────────────────
 
 @patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
@@ -408,6 +476,62 @@ def test_grok_video_custom_duration(mock_requests):
     assert result.cost_estimate == 5 * 0.05
     post_kwargs = mock_requests.post.call_args
     assert post_kwargs.kwargs["json"]["duration"] == 5
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_start_image_payload(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-789"}
+    mock_submit.raise_for_status = MagicMock()
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 5},
+    }
+    mock_status.raise_for_status = MagicMock()
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, MagicMock(content=b"vid")]
+
+    source = ResolvedImage(data=b"ref", mime_type="image/jpeg", original_url="https://example.com/frame.jpg")
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("move", duration=5, source_image=source)
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["image"]["url"] == "https://example.com/frame.jpg"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_reference_payload(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-789"}
+    mock_submit.raise_for_status = MagicMock()
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 10},
+    }
+    mock_status.raise_for_status = MagicMock()
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, MagicMock(content=b"vid")]
+
+    refs = [
+        ResolvedImage(data=b"ref", mime_type="image/jpeg", original_url="https://example.com/a.jpg"),
+        ResolvedImage(data=b"ref", mime_type="image/jpeg", original_url="https://example.com/b.jpg"),
+    ]
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("combine", references=refs)
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["reference_images"] == [
+        {"url": "https://example.com/a.jpg"},
+        {"url": "https://example.com/b.jpg"},
+    ]
 
 
 # ── chat() multi-turn ───────────────────────────────────────────────────────
@@ -600,6 +724,30 @@ def test_gemini_video_snaps_unsupported_duration(mock_client_cls):
     # 12 is unsupported; snapped down to the max 8s clip.
     assert result.cost_estimate == 8 * 0.10
     assert mock_client.models.generate_videos.call_args.kwargs["config"].duration_seconds == 8
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_with_start_image(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+    import io
+    from PIL import Image
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_videos.return_value = MagicMock(done=False)
+    mock_client.operations.get.return_value = _veo_done_op(MagicMock())
+    mock_client.files.download.return_value = b"vid"
+
+    img = Image.new("RGB", (10, 10), color="red")
+    buf = io.BytesIO()
+    img.save(buf, "JPEG")
+    source = ResolvedImage(data=buf.getvalue(), mime_type="image/jpeg")
+
+    with patch("backends.gemini_video.time.sleep"):
+        GeminiProvider().generate("move", source_image=source)
+
+    assert "image" in mock_client.models.generate_videos.call_args.kwargs
 
 
 @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})

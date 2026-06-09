@@ -1,6 +1,8 @@
 """Flag parsing and directive syntax for /ai-slop commands."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import media_refs
 
 
 @dataclass
@@ -20,6 +22,9 @@ class ParsedCommand:
     credit_target: str | None = None
     credit_amount: float | None = None
     conversation: bool = False
+    upload_requested: bool = False
+    source_image: media_refs.ReferenceImage | None = None
+    reference_images: list[media_refs.ReferenceImage] = field(default_factory=list)
 
 
 def parse_command(input_str: str) -> ParsedCommand:
@@ -41,6 +46,9 @@ def parse_command(input_str: str) -> ParsedCommand:
     credit_target = None
     credit_amount = None
     conversation_mode = False
+    upload_requested = False
+    source_image = None
+    reference_images = []
 
     # Extract flags
     prompt_tokens = []
@@ -79,6 +87,28 @@ def parse_command(input_str: str) -> ParsedCommand:
                     prompt_tokens.append(tokens[i])
         elif lower in ("-c", "--conversation"):
             conversation_mode = True
+        elif lower == "--upload":
+            upload_requested = True
+        elif lower in ("--edit", "--ref", "--start"):
+            if i + 1 < len(tokens):
+                i += 1
+                role = {
+                    "--edit": "edit",
+                    "--ref": "reference",
+                    "--start": "start",
+                }[lower]
+                try:
+                    reference = media_refs.reference_from_url(tokens[i], role=role)
+                except ValueError:
+                    prompt_tokens.append(token)
+                    prompt_tokens.append(tokens[i])
+                else:
+                    if role == "start":
+                        source_image = reference
+                    else:
+                        reference_images.append(reference)
+            else:
+                prompt_tokens.append(token)
         elif lower in ("-credit", "--credit"):
             if i + 2 < len(tokens):
                 i += 1
@@ -169,4 +199,7 @@ def parse_command(input_str: str) -> ParsedCommand:
         credit_target=credit_target,
         credit_amount=credit_amount,
         conversation=conversation_mode,
+        upload_requested=upload_requested,
+        source_image=source_image,
+        reference_images=reference_images,
     )

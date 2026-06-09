@@ -7,6 +7,9 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 - `/ai-slop <prompt>` — text response (default: Anthropic Claude)
 - `/ai-slop -i <prompt>` — image generation (default: Google Gemini)
 - `/ai-slop -v <prompt>` — video generation (default: xAI Grok)
+- `/ai-slop -i --edit <image-url> <prompt>` — image generation/editing with a reference image
+- `/ai-slop -v --start <image-url> <prompt>` — video generation from a starting image
+- `/ai-slop -i --upload` / `/ai-slop -v --upload` — open a Slack upload form for temporary reference images
 - `/ai-slop -e <prompt>` — emoji-only text response
 - `/ai-slop -c <prompt>` — start a multi-turn text conversation in a thread
 - `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
@@ -53,6 +56,7 @@ Two-Lambda architecture:
 | `ANTHROPIC_API_KEY` | — | Required if using anthropic backend |
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
 | `OPENAI_API_KEY` | — | Required if using openai backends |
+| `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2` | OpenAI model used when reference images are supplied |
 | `OPENAI_ORGANIZATION` | — | Required if using openai backends |
 | `XAI_API_KEY` | — | Required if using grok backends |
 
@@ -60,6 +64,7 @@ Two-Lambda architecture:
 | Variable | Purpose |
 |---|---|
 | `AI_SLOP_SNS_TOPIC` | SNS topic ARN |
+| `SLACK_BOT_TOKEN` | Opens Slack upload modals |
 
 ## Build
 
@@ -92,6 +97,7 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
    - `GOOGLE_API_KEY`
    - `OPENAI_API_KEY`
    - `OPENAI_ORGANIZATION`
+   - `SLACK_BOT_TOKEN`
    - `XAI_API_KEY`
 
 3. Push to `main` — GitHub Actions will test, build, and deploy.
@@ -103,13 +109,16 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
 
    Configure your Slack app at https://api.slack.com/apps as follows:
    - **Slash command** Request URL: `<base_url>/ai-slop`
+   - **Interactivity & Shortcuts** → Enable Interactivity
+     - Request URL: `<base_url>/slack/interactions`
    - **Event Subscriptions** → Enable Events
      - Request URL: `<base_url>/slack/events`
      - Subscribe to bot event: `app_mention`
    - **OAuth & Permissions** → Bot Token Scopes:
      - `chat:write` - write messages
      - `commands` - receive slash commands
-     - `files:write` - write files
+     - `files:read` - read uploaded reference images
+     - `files:write` - upload generated videos and delete temporary reference images
      - `app_mentions:read` — receive `@slop-bot` events
      - `users:read` — resolve user IDs to display names in transcripts
    - Reinstall the app to your workspace after changing scopes; copy the
