@@ -19,14 +19,12 @@ import urllib.request
 import boto3
 
 
-HELP_TEXT = """*slop-bot* — AI text and image generation
+HELP_TEXT = """*slop-bot* — AI text, image, and video generation
 
 *Usage:*
   `/slop-bot <prompt>` — text response
   `/slop-bot -i <prompt>` — image generation
   `/slop-bot -v [seconds] <prompt>` — video generation (Grok: default 10s, max 15s; Veo: 4/6/8s)
-  `/slop-bot -i --upload` — image generation/editing with uploaded reference images
-  `/slop-bot -v --upload` — video generation with an uploaded start/reference image
   `/slop-bot -e <prompt>` — emoji-only response
   `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
   `/slop-bot -c <prompt>` — start a conversation; reply with `@slop-bot <prompt>` in the thread to continue
@@ -39,9 +37,15 @@ HELP_TEXT = """*slop-bot* — AI text and image generation
   `/slop-bot -p -i a beautiful sunset` — potato mode image
   `/slop-bot -i -b openai a cat` — image with DALL-E
   `/slop-bot -v -b gemini a corgi surfing` — video with Veo (native audio/dialogue)
+
+*Reference images:*
+  `/slop-bot -i --upload` — open a form to upload 1-3 temporary image references
+  `/slop-bot -v --upload` — open a form to upload a start frame or loose video references
   `/slop-bot -i --edit <image-url> turn this into a watercolor painting`
+  `/slop-bot -i --ref <image-url> make something in this style`
   `/slop-bot -v --start <image-url> slow cinematic push in`
   `/slop-bot -v --ref <image-url> --ref <image-url> combine these subjects`
+  Uploaded reference files are deleted from Slack after the bot downloads them.
 
 *Conversations:*
   `/slop-bot -c <prompt>` starts a multi-turn text conversation rooted in a

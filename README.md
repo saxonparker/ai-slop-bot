@@ -4,12 +4,14 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 
 ## Usage
 
-- `/ai-slop <prompt>` — text response (default: Anthropic Claude)
-- `/ai-slop -i <prompt>` — image generation (default: Google Gemini)
+- `/ai-slop <prompt>` — text response (default: Gemini)
+- `/ai-slop -i <prompt>` — image generation (default: Grok)
 - `/ai-slop -v <prompt>` — video generation (default: xAI Grok)
 - `/ai-slop -i --edit <image-url> <prompt>` — image generation/editing with a reference image
+- `/ai-slop -i --ref <image-url> <prompt>` — image generation with a style/content reference
 - `/ai-slop -v --start <image-url> <prompt>` — video generation from a starting image
-- `/ai-slop -i --upload` / `/ai-slop -v --upload` — open a Slack upload form for temporary reference images
+- `/ai-slop -v --ref <image-url> <prompt>` — video generation with a loose reference image
+- `/ai-slop -i --upload` / `/ai-slop -v --upload` — open a Slack upload modal for temporary reference images
 - `/ai-slop -e <prompt>` — emoji-only text response
 - `/ai-slop -c <prompt>` — start a multi-turn text conversation in a thread
 - `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
@@ -21,6 +23,29 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 
 Slack does not allow slash commands inside threads, so conversation
 follow-ups are made by `@`-mentioning the bot in the thread instead.
+
+### Reference images
+
+There are two ways to provide images for generated content:
+
+- Use URL flags directly in the slash command:
+  - `--edit <image-url>` for image edits.
+  - `--ref <image-url>` for image or video style/content references.
+  - `--start <image-url>` for a video start frame.
+- Use the Slack upload modal:
+  - `/ai-slop -i --upload` opens an image prompt form with 1-3 uploaded references.
+  - `/ai-slop -v --upload` opens a video prompt form where uploads can be a single start frame or loose references.
+
+Uploaded modal files are temporary. Slack stores them briefly, then the bot
+downloads and deletes them after it has normalized the images for provider
+calls. Generated outputs still use the existing S3/CloudFront upload path.
+
+Backend support differs slightly:
+
+- Grok image and video support reference images.
+- Gemini image supports reference images.
+- Gemini video supports one start image, but not loose references.
+- OpenAI image uses the edit model when references are supplied.
 
 ## Architecture
 

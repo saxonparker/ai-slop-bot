@@ -62,6 +62,14 @@ def test_help_text_mentions_conversation_flag():
     assert "conversation" in ai_slop_dispatch.HELP_TEXT.lower()
 
 
+def test_help_text_mentions_reference_image_modal():
+    help_text = ai_slop_dispatch.HELP_TEXT
+    assert "--upload" in help_text
+    assert "--edit" in help_text
+    assert "--start" in help_text
+    assert "deleted from Slack" in help_text
+
+
 def _events_request(payload: dict):
     return {
         "path": "/slack/events",
