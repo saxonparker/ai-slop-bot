@@ -5,6 +5,35 @@ from dataclasses import dataclass, field
 import media_refs
 
 
+_SMART_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+_DASH_TRANSLATION = str.maketrans({ch: "-" for ch in _SMART_DASHES})
+_LONG_FLAGS = {
+    "--usage",
+    "--report",
+    "--gallery",
+    "--pay",
+    "--conversation",
+    "--upload",
+    "--edit",
+    "--ref",
+    "--start",
+    "--credit",
+}
+
+
+def _normalize_flag_token(token: str) -> str:
+    """Normalize smart-punctuation variants only for flag matching."""
+    lower = token.lower()
+    normalized = lower.translate(_DASH_TRANSLATION)
+    if normalized.startswith("--"):
+        return normalized
+    if lower[:1] in _SMART_DASHES:
+        long_form = f"--{normalized[1:]}"
+        if long_form in _LONG_FLAGS:
+            return long_form
+    return normalized
+
+
 @dataclass
 class ParsedCommand:
     """Result of parsing an /ai-slop command string."""
@@ -55,7 +84,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        lower = token.lower()
+        lower = _normalize_flag_token(token)
         if lower == "-i":
             image_mode = True
         elif lower == "-v":

@@ -309,3 +309,9 @@ def test_upload_flag():
     result = parsing.parse_command("-i --upload make something")
     assert result.upload_requested is True
     assert result.prompt_text == "make something"
+
+
+def test_upload_flag_accepts_ios_smart_dash():
+    result = parsing.parse_command("-i \u2014upload make something")
+    assert result.upload_requested is True
+    assert result.prompt_text == "make something"

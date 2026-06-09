@@ -243,6 +243,32 @@ def test_upload_slash_command_opens_modal(mock_boto, mock_urlopen):
 })
 @patch("ai_slop_dispatch.urllib.request.urlopen")
 @patch("ai_slop_dispatch.boto3.client")
+def test_upload_slash_command_accepts_ios_smart_dash(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+
+    response = ai_slop_dispatch.dispatch(
+        _slack_event("-i \u2014upload make it strange", trigger_id="trig"),
+        None,
+    )
+
+    assert response["statusCode"] == "200"
+    mock_boto.return_value.publish.assert_not_called()
+    request = mock_urlopen.call_args.args[0]
+    payload = json.loads(request.data.decode("utf-8"))
+    view = payload["view"]
+    metadata = json.loads(view["private_metadata"])
+    assert metadata["mode"] == "image"
+    prompt_block = next(block for block in view["blocks"] if block["block_id"] == "prompt_block")
+    assert prompt_block["element"]["initial_value"] == "make it strange"
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
 def test_bare_image_edit_slash_command_opens_modal(mock_boto, mock_urlopen):
     mock_boto.return_value = MagicMock()
     mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'

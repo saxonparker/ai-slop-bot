@@ -67,6 +67,33 @@ HELP_TEXT = """*slop-bot* — AI text, image, and video generation
 
 # Matches a leading Slack user mention like `<@U12345>` or `<@U12345|name>`.
 _LEADING_MENTION_RE = re.compile(r"^\s*<@[UW][A-Z0-9]+(\|[^>]+)?>\s*")
+_SMART_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+_DASH_TRANSLATION = str.maketrans({ch: "-" for ch in _SMART_DASHES})
+_LONG_FLAGS = {
+    "--usage",
+    "--report",
+    "--gallery",
+    "--pay",
+    "--conversation",
+    "--upload",
+    "--edit",
+    "--ref",
+    "--start",
+    "--credit",
+}
+
+
+def _normalize_flag_token(token: str) -> str:
+    """Normalize smart-punctuation variants only for flag matching."""
+    lower = token.lower()
+    normalized = lower.translate(_DASH_TRANSLATION)
+    if normalized.startswith("--"):
+        return normalized
+    if lower[:1] in _SMART_DASHES:
+        long_form = f"--{normalized[1:]}"
+        if long_form in _LONG_FLAGS:
+            return long_form
+    return normalized
 
 
 def dispatch(event, _):
@@ -235,12 +262,12 @@ def _json_payload(payload: dict):
 
 def _is_upload_request(prompt: str) -> bool:
     tokens = prompt.split()
-    return "--upload" in tokens or _has_bare_image_edit(tokens)
+    return any(_normalize_flag_token(token) == "--upload" for token in tokens) or _has_bare_image_edit(tokens)
 
 
 def _has_bare_image_edit(tokens: list[str]) -> bool:
     for i, token in enumerate(tokens):
-        if token.lower() != "--edit":
+        if _normalize_flag_token(token) != "--edit":
             continue
         if i + 1 >= len(tokens):
             return True
@@ -269,7 +296,7 @@ def _parse_upload_command(prompt: str) -> dict:
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        lower = token.lower()
+        lower = _normalize_flag_token(token)
         if lower == "--upload":
             pass
         elif lower == "--edit":
