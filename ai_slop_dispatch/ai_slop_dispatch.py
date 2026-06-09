@@ -40,6 +40,7 @@ HELP_TEXT = """*slop-bot* — AI text, image, and video generation
 
 *Reference images:*
   `/slop-bot -i --upload` — open a form to upload 1-3 temporary image references
+  `/slop-bot -i --edit` — open the same form for an uploaded image edit
   `/slop-bot -v --upload` — open a form to upload a start frame or loose video references
   `/slop-bot -i --edit <image-url> turn this into a watercolor painting`
   `/slop-bot -i --ref <image-url> make something in this style`
@@ -233,7 +234,29 @@ def _json_payload(payload: dict):
 
 
 def _is_upload_request(prompt: str) -> bool:
-    return "--upload" in prompt.split()
+    tokens = prompt.split()
+    return "--upload" in tokens or _has_bare_image_edit(tokens)
+
+
+def _has_bare_image_edit(tokens: list[str]) -> bool:
+    for i, token in enumerate(tokens):
+        if token.lower() != "--edit":
+            continue
+        if i + 1 >= len(tokens):
+            return True
+        if not _looks_like_url(tokens[i + 1]):
+            return True
+    return False
+
+
+def _looks_like_url(token: str) -> bool:
+    value = token.strip()
+    if value.startswith("<") and value.endswith(">"):
+        value = value[1:-1]
+    if "|" in value:
+        value = value.split("|", 1)[0]
+    parsed = urllib.parse.urlparse(value)
+    return parsed.scheme in ("http", "https")
 
 
 def _parse_upload_command(prompt: str) -> dict:
@@ -249,6 +272,11 @@ def _parse_upload_command(prompt: str) -> dict:
         lower = token.lower()
         if lower == "--upload":
             pass
+        elif lower == "--edit":
+            if i + 1 < len(tokens) and _looks_like_url(tokens[i + 1]):
+                i += 1
+            else:
+                mode = "image"
         elif lower == "-i":
             mode = "image"
         elif lower == "-v":
@@ -259,7 +287,7 @@ def _parse_upload_command(prompt: str) -> dict:
         elif lower == "-b" and i + 1 < len(tokens):
             i += 1
             backend = tokens[i].lower()
-        elif lower in ("--edit", "--ref", "--start") and i + 1 < len(tokens):
+        elif lower in ("--ref", "--start") and i + 1 < len(tokens):
             i += 1
         else:
             prompt_tokens.append(token)

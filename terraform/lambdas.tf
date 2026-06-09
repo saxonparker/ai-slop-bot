@@ -116,22 +116,23 @@ resource "aws_lambda_function" "bot" {
 
   environment {
     variables = {
-      TEXT_BACKEND             = var.text_backend
-      IMAGE_BACKEND            = var.image_backend
-      VIDEO_BACKEND            = var.video_backend
-      ANTHROPIC_API_KEY        = var.anthropic_api_key
-      GOOGLE_API_KEY           = var.google_api_key
-      OPENAI_API_KEY           = var.openai_api_key
-      OPENAI_IMAGE_EDIT_MODEL  = var.openai_image_edit_model
-      OPENAI_ORGANIZATION      = var.openai_organization
-      XAI_API_KEY              = var.xai_api_key
-      SLACK_BOT_TOKEN          = var.slack_bot_token
-      USAGE_TABLE_NAME         = aws_dynamodb_table.usage.name
-      LEDGER_TABLE_NAME        = aws_dynamodb_table.ledger.name
-      CONVERSATIONS_TABLE_NAME = aws_dynamodb_table.conversations.name
-      CONVERSATION_MAX_CHARS   = "200000"
-      VENMO_USERNAME           = var.venmo_username
-      ADMIN_USERS              = var.admin_users
+      TEXT_BACKEND                    = var.text_backend
+      IMAGE_BACKEND                   = var.image_backend
+      VIDEO_BACKEND                   = var.video_backend
+      ANTHROPIC_API_KEY               = var.anthropic_api_key
+      GOOGLE_API_KEY                  = var.google_api_key
+      GROK_IMAGE_EDIT_TIMEOUT_SECONDS = tostring(var.grok_image_edit_timeout_seconds)
+      OPENAI_API_KEY                  = var.openai_api_key
+      OPENAI_IMAGE_EDIT_MODEL         = var.openai_image_edit_model
+      OPENAI_ORGANIZATION             = var.openai_organization
+      XAI_API_KEY                     = var.xai_api_key
+      SLACK_BOT_TOKEN                 = var.slack_bot_token
+      USAGE_TABLE_NAME                = aws_dynamodb_table.usage.name
+      LEDGER_TABLE_NAME               = aws_dynamodb_table.ledger.name
+      CONVERSATIONS_TABLE_NAME        = aws_dynamodb_table.conversations.name
+      CONVERSATION_MAX_CHARS          = "200000"
+      VENMO_USERNAME                  = var.venmo_username
+      ADMIN_USERS                     = var.admin_users
     }
   }
 }

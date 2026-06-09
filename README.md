@@ -11,7 +11,8 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 - `/ai-slop -i --ref <image-url> <prompt>` — image generation with a style/content reference
 - `/ai-slop -v --start <image-url> <prompt>` — video generation from a starting image
 - `/ai-slop -v --ref <image-url> <prompt>` — video generation with a loose reference image
-- `/ai-slop -i --upload` / `/ai-slop -v --upload` — open a Slack upload modal for temporary reference images
+- `/ai-slop -i --upload` or `/ai-slop -i --edit` — open a Slack upload modal for temporary image references
+- `/ai-slop -v --upload` — open a Slack upload modal for temporary video references
 - `/ai-slop -e <prompt>` — emoji-only text response
 - `/ai-slop -c <prompt>` — start a multi-turn text conversation in a thread
 - `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
@@ -34,6 +35,8 @@ There are two ways to provide images for generated content:
   - `--start <image-url>` for a video start frame.
 - Use the Slack upload modal:
   - `/ai-slop -i --upload` opens an image prompt form with 1-3 uploaded references.
+  - `/ai-slop -i --edit` opens the same form for editing an uploaded image.
+  - `/ai-slop -i --edit make this watercolor` opens the form with the prompt pre-filled.
   - `/ai-slop -v --upload` opens a video prompt form where uploads can be a single start frame or loose references.
 
 Uploaded modal files are temporary. Slack stores them briefly, then the bot
@@ -80,6 +83,7 @@ Two-Lambda architecture:
 | `VIDEO_MODEL` | varies by backend (`grok-imagine-video` / `veo-3.1-fast-generate-preview`) | Model name override |
 | `ANTHROPIC_API_KEY` | — | Required if using anthropic backend |
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
+| `GROK_IMAGE_EDIT_TIMEOUT_SECONDS` | `180` | Timeout for Grok image edit requests |
 | `OPENAI_API_KEY` | — | Required if using openai backends |
 | `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2` | OpenAI model used when reference images are supplied |
 | `OPENAI_ORGANIZATION` | — | Required if using openai backends |
@@ -134,6 +138,10 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
 
    Configure your Slack app at https://api.slack.com/apps as follows:
    - **Slash command** Request URL: `<base_url>/ai-slop`
+     - Usage Hint:
+       ```text
+       <prompt> | -i | -v [sec] | --upload | --edit [img-url] | --ref/--start <img-url> | -b <backend> | -e | -p | -u | -pay <amt>
+       ```
    - **Interactivity & Shortcuts** → Enable Interactivity
      - Request URL: `<base_url>/slack/interactions`
    - **Event Subscriptions** → Enable Events

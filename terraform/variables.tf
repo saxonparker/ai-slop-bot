@@ -23,6 +23,11 @@ variable "openai_image_edit_model" {
   default = "gpt-image-2"
 }
 
+variable "grok_image_edit_timeout_seconds" {
+  type    = number
+  default = 180
+}
+
 variable "xai_api_key" {
   type      = string
   sensitive = true

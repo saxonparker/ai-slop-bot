@@ -9,6 +9,7 @@ from usage import GenerationResult, COST_PER_IMAGE
 
 
 BASE_URL = "https://api.x.ai/v1"
+DEFAULT_EDIT_TIMEOUT_SECONDS = 180
 
 
 class GrokProvider:
@@ -69,12 +70,21 @@ class GrokProvider:
         else:
             payload["images"] = image_payloads
 
-        response = requests.post(
-            f"{BASE_URL}/images/edits",
-            headers=headers,
-            json=payload,
-            timeout=60,
-        )
+        timeout = int(os.environ.get(
+            "GROK_IMAGE_EDIT_TIMEOUT_SECONDS",
+            str(DEFAULT_EDIT_TIMEOUT_SECONDS),
+        ))
+        try:
+            response = requests.post(
+                f"{BASE_URL}/images/edits",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.Timeout as exc:
+            raise RuntimeError(
+                f"Grok image edit timed out after {timeout} seconds. Please retry.",
+            ) from exc
         response.raise_for_status()
         data = response.json()
         image = data["data"][0]

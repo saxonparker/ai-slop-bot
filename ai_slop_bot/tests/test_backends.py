@@ -4,6 +4,9 @@ import sys
 from unittest.mock import MagicMock, patch
 import base64
 
+import pytest
+import requests
+
 sys.path.append(".")
 
 from media_refs import ResolvedImage
@@ -396,13 +399,60 @@ def test_grok_image_edit_with_reference(mock_requests):
     mock_requests.post.return_value = mock_post
     mock_requests.get.return_value = mock_download
 
-    reference = ResolvedImage(data=b"ref", mime_type="image/jpeg", original_url="https://example.com/ref.jpg")
+    reference = ResolvedImage(
+        data=b"ref", mime_type="image/jpeg",
+        original_url="https://example.com/ref.jpg",
+    )
     result = GrokProvider().generate("make it pop", references=[reference])
 
     assert result.content == b"edited"
     payload = mock_requests.post.call_args.kwargs["json"]
     assert payload["image"]["url"] == "https://example.com/ref.jpg"
     assert payload["prompt"] == "make it pop"
+    assert mock_requests.post.call_args.kwargs["timeout"] == 180
+
+
+@patch.dict("os.environ", {
+    "XAI_API_KEY": "fake-key",
+    "GROK_IMAGE_EDIT_TIMEOUT_SECONDS": "240",
+})
+@patch("backends.grok_image.requests")
+def test_grok_image_edit_timeout_env_override(mock_requests):
+    from backends.grok_image import GrokProvider
+
+    mock_post = MagicMock()
+    mock_post.json.return_value = {
+        "data": [{"b64_json": base64.b64encode(b"edited").decode("ascii")}],
+    }
+    mock_post.raise_for_status = MagicMock()
+    mock_requests.post.return_value = mock_post
+
+    reference = ResolvedImage(
+        data=b"ref", mime_type="image/jpeg",
+        original_url="https://example.com/ref.jpg",
+    )
+    result = GrokProvider().generate("make it pop", references=[reference])
+
+    assert result.content == b"edited"
+    assert mock_requests.post.call_args.kwargs["timeout"] == 240
+
+
+@patch.dict("os.environ", {
+    "XAI_API_KEY": "fake-key",
+    "GROK_IMAGE_EDIT_TIMEOUT_SECONDS": "240",
+})
+@patch("backends.grok_image.requests.post")
+def test_grok_image_edit_timeout_error_is_user_friendly(mock_post):
+    from backends.grok_image import GrokProvider
+
+    mock_post.side_effect = requests.Timeout("read timed out")
+    reference = ResolvedImage(
+        data=b"ref", mime_type="image/jpeg",
+        original_url="https://example.com/ref.jpg",
+    )
+
+    with pytest.raises(RuntimeError, match="timed out after 240 seconds"):
+        GrokProvider().generate("make it pop", references=[reference])
 
 
 # ── Grok Video ──────────────────────────────────────────────────────────────
