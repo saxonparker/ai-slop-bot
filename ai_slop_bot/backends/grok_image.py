@@ -5,7 +5,7 @@ import os
 
 from openai import OpenAI
 import requests
-from usage import GenerationResult, COST_PER_IMAGE
+from usage import GenerationResult, COST_PER_IMAGE, xai_cost_from_usage
 
 
 BASE_URL = "https://api.x.ai/v1"
@@ -35,6 +35,7 @@ class GrokProvider:
         response = client.images.generate(
             prompt=full_prompt, n=1, model=model,
         )
+        cost_actual, cost_ticks = xai_cost_from_usage(getattr(response, "usage", None))
         image_url = response.data[0].url
         image_response = requests.get(image_url, timeout=10000)
         return GenerationResult(
@@ -44,6 +45,8 @@ class GrokProvider:
             input_tokens=0,
             output_tokens=0,
             cost_estimate=COST_PER_IMAGE["grok"],
+            cost_actual=cost_actual,
+            cost_in_usd_ticks=cost_ticks,
         )
 
     def _edit(self, prompt: str, references: list) -> GenerationResult:
@@ -87,6 +90,7 @@ class GrokProvider:
             ) from exc
         response.raise_for_status()
         data = response.json()
+        cost_actual, cost_ticks = xai_cost_from_usage(data.get("usage"))
         image = data["data"][0]
         if image.get("url"):
             image_response = requests.get(image["url"], timeout=10000)
@@ -101,4 +105,6 @@ class GrokProvider:
             input_tokens=0,
             output_tokens=0,
             cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
+            cost_actual=cost_actual,
+            cost_in_usd_ticks=cost_ticks,
         )

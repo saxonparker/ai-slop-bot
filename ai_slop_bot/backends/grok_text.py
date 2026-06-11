@@ -5,7 +5,7 @@ import os
 from openai import OpenAI
 
 import conversations
-from usage import GenerationResult, estimate_text_cost
+from usage import GenerationResult, estimate_text_cost, xai_cost_from_usage
 
 
 class GrokProvider:
@@ -27,6 +27,7 @@ class GrokProvider:
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
         cost = estimate_text_cost("grok", input_tokens, output_tokens)
+        cost_actual, cost_ticks = xai_cost_from_usage(response.usage)
         return GenerationResult(
             content=reply,
             backend="grok",
@@ -34,6 +35,8 @@ class GrokProvider:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_estimate=cost,
+            cost_actual=cost_actual,
+            cost_in_usd_ticks=cost_ticks,
         )
 
     def generate(self, system: str, prompt: str) -> GenerationResult:

@@ -4,7 +4,7 @@ import os
 import time
 
 import requests
-from usage import GenerationResult, COST_PER_VIDEO
+from usage import GenerationResult, COST_PER_VIDEO, xai_cost_from_usage
 
 
 BASE_URL = "https://api.x.ai/v1"
@@ -67,6 +67,7 @@ class GrokProvider:
                 duration = data["video"].get("duration", 0)
                 video_data = requests.get(video_url, timeout=60).content
                 cost = duration * COST_PER_VIDEO["grok"]
+                cost_actual, cost_ticks = xai_cost_from_usage(data.get("usage"))
                 return GenerationResult(
                     content=video_data,
                     backend="grok",
@@ -74,6 +75,8 @@ class GrokProvider:
                     input_tokens=0,
                     output_tokens=0,
                     cost_estimate=cost,
+                    cost_actual=cost_actual,
+                    cost_in_usd_ticks=cost_ticks,
                 )
             if status in ("failed", "expired"):
                 raise RuntimeError(f"Video generation {status}: {data}")

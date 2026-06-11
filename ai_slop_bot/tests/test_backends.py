@@ -318,6 +318,7 @@ def test_grok_text_generate(mock_openai_cls):
     mock_response = MagicMock(choices=[mock_choice])
     mock_response.usage.prompt_tokens = 12
     mock_response.usage.completion_tokens = 18
+    mock_response.usage.cost_in_usd_ticks = 25000000
     mock_client.chat.completions.create.return_value = mock_response
 
     provider = GrokProvider()
@@ -329,6 +330,8 @@ def test_grok_text_generate(mock_openai_cls):
     assert result.input_tokens == 12
     assert result.output_tokens == 18
     assert result.cost_estimate > 0
+    assert result.cost_actual == 0.0025
+    assert result.cost_in_usd_ticks == 25000000
     mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
     call_kwargs = mock_client.chat.completions.create.call_args
     assert call_kwargs.kwargs["messages"] == [
@@ -368,7 +371,8 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     mock_client = MagicMock()
     mock_openai_cls.return_value = mock_client
     mock_client.images.generate.return_value = MagicMock(
-        data=[MagicMock(url="https://fake-url.com/grok-image.png")]
+        data=[MagicMock(url="https://fake-url.com/grok-image.png")],
+        usage=MagicMock(cost_in_usd_ticks=200000000),
     )
     fake_bytes = b"\x89PNG fake grok image"
     mock_requests_get.return_value = MagicMock(content=fake_bytes)
@@ -380,6 +384,8 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     assert result.content == fake_bytes
     assert result.backend == "grok"
     assert result.cost_estimate == 0.05
+    assert result.cost_actual == 0.02
+    assert result.cost_in_usd_ticks == 200000000
     mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
     call_args = mock_client.images.generate.call_args
     assert call_args.kwargs["prompt"].endswith("a cat")
@@ -393,7 +399,10 @@ def test_grok_image_edit_with_reference(mock_requests):
     from backends.grok_image import GrokProvider
 
     mock_post = MagicMock()
-    mock_post.json.return_value = {"data": [{"url": "https://fake-url.com/edited.png"}]}
+    mock_post.json.return_value = {
+        "data": [{"url": "https://fake-url.com/edited.png"}],
+        "usage": {"cost_in_usd_ticks": 300000000},
+    }
     mock_post.raise_for_status = MagicMock()
     mock_download = MagicMock(content=b"edited", raise_for_status=MagicMock())
     mock_requests.post.return_value = mock_post
@@ -406,6 +415,8 @@ def test_grok_image_edit_with_reference(mock_requests):
     result = GrokProvider().generate("make it pop", references=[reference])
 
     assert result.content == b"edited"
+    assert result.cost_actual == 0.03
+    assert result.cost_in_usd_ticks == 300000000
     payload = mock_requests.post.call_args.kwargs["json"]
     assert payload["image"]["url"] == "https://example.com/ref.jpg"
     assert payload["prompt"] == "make it pop"
@@ -473,6 +484,7 @@ def test_grok_video_generate(mock_requests):
         "status": "done",
         "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 8},
         "model": "grok-imagine-video",
+        "usage": {"cost_in_usd_ticks": 5600000000},
     }
     mock_status.raise_for_status = MagicMock()
 
@@ -492,6 +504,8 @@ def test_grok_video_generate(mock_requests):
     assert result.backend == "grok"
     assert result.model == "grok-imagine-video"
     assert result.cost_estimate == 8 * 0.05
+    assert result.cost_actual == 0.56
+    assert result.cost_in_usd_ticks == 5600000000
     # Default duration (10) should be sent in request
     post_kwargs = mock_requests.post.call_args
     assert post_kwargs.kwargs["json"]["duration"] == 10

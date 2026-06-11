@@ -16,6 +16,8 @@ class GenerationResult(typing.NamedTuple):
     input_tokens: int
     output_tokens: int
     cost_estimate: float
+    cost_actual: float | None = None
+    cost_in_usd_ticks: int | None = None
 
 
 COST_PER_MILLION_TOKENS = {
@@ -36,12 +38,39 @@ COST_PER_IMAGE = {
     "grok": 0.05,  # grok-imagine-image-quality
 }
 
+TICKS_PER_USD = 10_000_000_000
+
 
 def estimate_text_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
     """Estimate cost for a text generation request."""
     key = f"{backend}_text" if backend in ("openai", "gemini", "grok") else backend
     rates = COST_PER_MILLION_TOKENS.get(key, {"input": 0.0, "output": 0.0})
     return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
+
+
+def xai_cost_from_usage(api_usage) -> tuple[float | None, int | None]:
+    """Extract xAI's exact billed cost from an SDK object or raw JSON usage dict."""
+    if not api_usage:
+        return None, None
+    if isinstance(api_usage, dict):
+        raw_ticks = api_usage.get("cost_in_usd_ticks")
+    else:
+        raw_ticks = getattr(api_usage, "cost_in_usd_ticks", None)
+    if raw_ticks is None:
+        return None, None
+    if not isinstance(raw_ticks, (int, str, Decimal)):
+        return None, None
+    try:
+        ticks = int(raw_ticks)
+    except (TypeError, ValueError):
+        return None, None
+    return ticks / TICKS_PER_USD, ticks
+
+
+def effective_cost(record: dict) -> float:
+    """Return actual billed cost when present, falling back to the estimate."""
+    cost = record.get("cost_actual", record.get("cost_estimate", 0))
+    return float(cost or 0)
 
 
 def _get_table():
@@ -68,7 +97,7 @@ def record_usage(user: str, result: GenerationResult):
         else:
             mode = "text"
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _get_table().put_item(Item={
+        item = {
             "user": user,
             "timestamp": now,
             "mode": mode,
@@ -77,7 +106,12 @@ def record_usage(user: str, result: GenerationResult):
             "cost_estimate": Decimal(str(round(result.cost_estimate, 6))),
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
-        })
+        }
+        if result.cost_actual is not None:
+            item["cost_actual"] = Decimal(str(round(result.cost_actual, 10)))
+        if result.cost_in_usd_ticks is not None:
+            item["cost_in_usd_ticks"] = int(result.cost_in_usd_ticks)
+        _get_table().put_item(Item=item)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"USAGE RECORD ERROR: {exc}")
 
@@ -123,9 +157,9 @@ def get_total_cost(user: str) -> float:
             KeyConditionExpression="#u = :user",
             ExpressionAttributeNames={"#u": "user"},
             ExpressionAttributeValues={":user": user},
-            ProjectionExpression="cost_estimate",
+            ProjectionExpression="cost_estimate,cost_actual",
         )
-        return sum(float(r.get("cost_estimate", 0)) for r in response.get("Items", []))
+        return sum(effective_cost(r) for r in response.get("Items", []))
     except Exception as exc:  # pylint: disable=broad-except
         print(f"USAGE QUERY ERROR: {exc}")
         return 0.0
@@ -134,13 +168,13 @@ def get_total_cost(user: str) -> float:
 def _format_block(label: str, records: list) -> dict:
     """Format a single time window as a Slack section block."""
     count = len(records)
-    total_cost = sum(float(r.get("cost_estimate", 0)) for r in records)
+    total_cost = sum(effective_cost(r) for r in records)
     by_mode = {}
     for r in records:
         mode = r.get("mode", "text")
         by_mode.setdefault(mode, {"count": 0, "cost": 0.0})
         by_mode[mode]["count"] += 1
-        by_mode[mode]["cost"] += float(r.get("cost_estimate", 0))
+        by_mode[mode]["cost"] += effective_cost(r)
     MODE_LABELS = {"text": "Text", "image": "Image", "video": "Video"}
     breakdown = "\n".join(
         f"  _{MODE_LABELS.get(m, m)}:_ {s['count']} req — ${s['cost']:.2f}"

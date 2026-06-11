@@ -254,7 +254,7 @@ def synth_user_message(prompt_text: str) -> dict:
 
 def build_assistant_message(result) -> dict:
     """Construct the canonical assistant-role message dict from a GenerationResult."""
-    return {
+    message = {
         "role": "assistant",
         "content": result.content,
         "ts": _now_iso(),
@@ -264,6 +264,11 @@ def build_assistant_message(result) -> dict:
         "output_tokens": int(result.output_tokens),
         "cost_estimate": float(result.cost_estimate),
     }
+    if getattr(result, "cost_actual", None) is not None:
+        message["cost_actual"] = float(result.cost_actual)
+    if getattr(result, "cost_in_usd_ticks", None) is not None:
+        message["cost_in_usd_ticks"] = int(result.cost_in_usd_ticks)
+    return message
 
 
 def _table():
@@ -305,11 +310,13 @@ def _api_text(msg: dict) -> str:
 
 
 def _decimalize_cost(assistant_msg: dict) -> dict:
-    """Return a copy of an assistant message with cost_estimate as Decimal.
+    """Return a copy of an assistant message with cost floats as Decimals.
 
-    cost_estimate is the only float on our write path; DynamoDB rejects floats.
+    DynamoDB rejects floats, so convert cost fields before storing messages.
     """
-    cost = assistant_msg.get("cost_estimate")
-    if not isinstance(cost, float):
-        return assistant_msg
-    return {**assistant_msg, "cost_estimate": Decimal(str(round(cost, 6)))}
+    converted = dict(assistant_msg)
+    for key, places in (("cost_estimate", 6), ("cost_actual", 10)):
+        cost = converted.get(key)
+        if isinstance(cost, float):
+            converted[key] = Decimal(str(round(cost, places)))
+    return converted
