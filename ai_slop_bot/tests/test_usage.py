@@ -14,7 +14,9 @@ from usage import (
     estimate_text_cost,
     get_total_cost,
     get_usage_summary,
+    record_failed_request,
     record_usage,
+    xai_cost_from_error,
     xai_cost_from_usage,
 )
 
@@ -77,6 +79,17 @@ def test_xai_cost_from_usage_dict():
     assert cost == 0.0123456789
 
 
+def test_xai_cost_from_error_response_json():
+    response = MagicMock()
+    response.json.return_value = {"usage": {"cost_in_usd_ticks": 200000000}}
+    exc = RuntimeError("moderated")
+    exc.response = response
+
+    cost, ticks = xai_cost_from_error(exc)
+    assert ticks == 200000000
+    assert cost == 0.02
+
+
 def test_effective_cost_prefers_actual():
     record = {"cost_estimate": Decimal("0.05"), "cost_actual": Decimal("0.02")}
     assert effective_cost(record) == 0.02
@@ -98,6 +111,7 @@ def test_record_usage_writes_item(mock_boto3):
     assert item["mode"] == "text"
     assert item["backend"] == "anthropic"
     assert item["model"] == "claude-sonnet-4-6"
+    assert item["status"] == "succeeded"
     assert item["input_tokens"] == 100
     assert item["output_tokens"] == 200
     assert isinstance(item["cost_estimate"], Decimal)
@@ -165,6 +179,34 @@ def test_record_usage_swallows_exceptions(mock_boto3):
     record_usage("testuser", result)
 
 
+@patch("usage.boto3")
+def test_record_failed_request_writes_item(mock_boto3):
+    mock_table = MagicMock()
+    mock_boto3.resource.return_value.Table.return_value = mock_table
+
+    record_failed_request(
+        "testuser",
+        mode="image",
+        backend="grok",
+        model="grok-imagine-image-quality",
+        error_type="moderation",
+        error_message="blocked by moderation",
+        cost_estimate=0.05,
+        cost_actual=0.02,
+        cost_in_usd_ticks=200000000,
+    )
+
+    item = mock_table.put_item.call_args.kwargs["Item"]
+    assert item["user"] == "testuser"
+    assert item["status"] == "failed"
+    assert item["mode"] == "image"
+    assert item["backend"] == "grok"
+    assert item["error_type"] == "moderation"
+    assert item["cost_estimate"] == Decimal("0.05")
+    assert item["cost_actual"] == Decimal("0.02")
+    assert item["cost_in_usd_ticks"] == 200000000
+
+
 # ── get_usage_summary ────────────────────────────────────────────────────────
 
 @patch("usage.boto3")
@@ -218,6 +260,7 @@ def test_get_usage_summary_prefers_actual_cost(mock_boto3):
             "timestamp": now,
             "mode": "image",
             "backend": "grok",
+            "status": "failed",
             "cost_estimate": Decimal("0.05"),
             "cost_actual": Decimal("0.02"),
         },
@@ -226,6 +269,7 @@ def test_get_usage_summary_prefers_actual_cost(mock_boto3):
     result = get_usage_summary("testuser")
     texts = [b["text"]["text"] for b in result]
     assert any("$0.02" in t for t in texts)
+    assert any("failed" in t for t in texts)
 
 
 @patch("usage.boto3")

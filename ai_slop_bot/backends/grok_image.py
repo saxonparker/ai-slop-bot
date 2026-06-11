@@ -5,7 +5,13 @@ import os
 
 from openai import OpenAI
 import requests
-from usage import GenerationResult, COST_PER_IMAGE, xai_cost_from_usage
+from usage import (
+    GenerationResult,
+    ProviderGenerationError,
+    COST_PER_IMAGE,
+    xai_cost_from_error,
+    xai_cost_from_usage,
+)
 
 
 BASE_URL = "https://api.x.ai/v1"
@@ -32,9 +38,21 @@ class GrokProvider:
             "not text to display. Generate the scene without any visible "
             "rendering of these instructions.\n\n" + prompt
         )
-        response = client.images.generate(
-            prompt=full_prompt, n=1, model=model,
-        )
+        try:
+            response = client.images.generate(
+                prompt=full_prompt, n=1, model=model,
+            )
+        except Exception as exc:
+            cost_actual, cost_ticks = xai_cost_from_error(exc)
+            raise ProviderGenerationError(
+                str(exc),
+                backend="grok",
+                model=model,
+                error_type=_classify_error(exc),
+                cost_estimate=COST_PER_IMAGE["grok"],
+                cost_actual=cost_actual,
+                cost_in_usd_ticks=cost_ticks,
+            ) from exc
         cost_actual, cost_ticks = xai_cost_from_usage(getattr(response, "usage", None))
         image_url = response.data[0].url
         image_response = requests.get(image_url, timeout=10000)
@@ -85,10 +103,26 @@ class GrokProvider:
                 timeout=timeout,
             )
         except requests.Timeout as exc:
-            raise RuntimeError(
+            raise ProviderGenerationError(
                 f"Grok image edit timed out after {timeout} seconds. Please retry.",
+                backend="grok",
+                model=model,
+                error_type="timeout",
+                cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
             ) from exc
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            cost_actual, cost_ticks = xai_cost_from_error(exc)
+            raise ProviderGenerationError(
+                str(exc),
+                backend="grok",
+                model=model,
+                error_type=_classify_error(exc),
+                cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
+                cost_actual=cost_actual,
+                cost_in_usd_ticks=cost_ticks,
+            ) from exc
         data = response.json()
         cost_actual, cost_ticks = xai_cost_from_usage(data.get("usage"))
         image = data["data"][0]
@@ -108,3 +142,12 @@ class GrokProvider:
             cost_actual=cost_actual,
             cost_in_usd_ticks=cost_ticks,
         )
+
+
+def _classify_error(exc: Exception) -> str:
+    text = str(exc).lower()
+    if "moderation" in text or "safety" in text or "policy" in text:
+        return "moderation"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    return "provider_error"

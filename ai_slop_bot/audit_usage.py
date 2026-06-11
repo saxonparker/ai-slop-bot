@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--end-date", help="Inclusive UTC date: YYYY-MM-DD.")
     parser.add_argument("--backend", help="Filter to one backend, e.g. grok.")
     parser.add_argument("--mode", help="Filter to one mode: text, image, or video.")
+    parser.add_argument("--status", help="Filter to succeeded or failed.")
     parser.add_argument("--user", help="Filter to one Slack user.")
     parser.add_argument("--model", help="Filter to one model.")
     parser.add_argument(
@@ -76,7 +77,7 @@ def matches_filters(record: dict, args) -> bool:
         return False
     if args.end_date and day > args.end_date:
         return False
-    for attr in ("backend", "mode", "user", "model"):
+    for attr in ("backend", "mode", "status", "user", "model"):
         expected = getattr(args, attr)
         if expected and str(record.get(attr, "")) != expected:
             return False
@@ -99,6 +100,7 @@ def summarize(records: list[dict]) -> list[dict]:
             str(record.get("timestamp", ""))[:10],
             str(record.get("backend", "")),
             str(record.get("mode", "")),
+            str(record.get("status", "succeeded")),
             str(record.get("model", "")),
         )
         bucket = buckets[key]
@@ -112,18 +114,19 @@ def summarize(records: list[dict]) -> list[dict]:
             bucket["actual_cost"] += float(record.get("cost_actual", 0) or 0)
 
     rows = []
-    for (day, backend, mode, model), values in buckets.items():
+    for (day, backend, mode, status, model), values in buckets.items():
         row = {
             "date": day,
             "backend": backend,
             "mode": mode,
+            "status": status,
             "model": model,
             **values,
         }
         row["estimate_delta"] = row["effective_cost"] - row["estimated_cost"]
         rows.append(row)
     return sorted(rows, key=lambda row: (
-        row["date"], row["backend"], row["mode"], row["model"],
+        row["date"], row["backend"], row["mode"], row["status"], row["model"],
     ))
 
 
@@ -134,12 +137,15 @@ def write_details_csv(path: str, records: list[dict]):
         "user",
         "backend",
         "mode",
+        "status",
         "model",
         "input_tokens",
         "output_tokens",
         "cost_estimate",
         "cost_actual",
         "cost_in_usd_ticks",
+        "error_type",
+        "error_message",
         "effective_cost",
     ]
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
@@ -160,6 +166,7 @@ def print_summary(summary: list[dict], records: list[dict]):
         "date",
         "backend",
         "mode",
+        "status",
         "requests",
         "actual_req",
         "estimated",
@@ -173,6 +180,7 @@ def print_summary(summary: list[dict], records: list[dict]):
             row["date"],
             row["backend"],
             row["mode"],
+            row["status"],
             str(row["requests"]),
             str(row["actual_requests"]),
             money(row["estimated_cost"]),

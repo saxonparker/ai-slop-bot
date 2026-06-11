@@ -4,7 +4,13 @@ import os
 import time
 
 import requests
-from usage import GenerationResult, COST_PER_VIDEO, xai_cost_from_usage
+from usage import (
+    GenerationResult,
+    ProviderGenerationError,
+    COST_PER_VIDEO,
+    xai_cost_from_error,
+    xai_cost_from_usage,
+)
 
 
 BASE_URL = "https://api.x.ai/v1"
@@ -47,7 +53,19 @@ class GrokProvider:
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            cost_actual, cost_ticks = xai_cost_from_error(exc)
+            raise ProviderGenerationError(
+                str(exc),
+                backend="grok",
+                model=model,
+                error_type=_classify_error(exc),
+                cost_estimate=duration * COST_PER_VIDEO["grok"],
+                cost_actual=cost_actual,
+                cost_in_usd_ticks=cost_ticks,
+            ) from exc
         request_id = resp.json()["request_id"]
 
         # Poll for completion
@@ -79,6 +97,26 @@ class GrokProvider:
                     cost_in_usd_ticks=cost_ticks,
                 )
             if status in ("failed", "expired"):
-                raise RuntimeError(f"Video generation {status}: {data}")
+                cost_actual, cost_ticks = xai_cost_from_usage(data.get("usage"))
+                raise ProviderGenerationError(
+                    f"Video generation {status}: {data}",
+                    backend="grok",
+                    model=model,
+                    error_type=_classify_error(data),
+                    cost_estimate=duration * COST_PER_VIDEO["grok"],
+                    cost_actual=cost_actual,
+                    cost_in_usd_ticks=cost_ticks,
+                )
 
         raise RuntimeError("Video generation timed out waiting for completion")
+
+
+def _classify_error(error) -> str:
+    text = str(error).lower()
+    if "moderation" in text or "safety" in text or "policy" in text:
+        return "moderation"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "expired" in text:
+        return "expired"
+    return "provider_error"

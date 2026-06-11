@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import os
 import sys
 import time
 import traceback
@@ -139,18 +140,29 @@ def ai_slop_bot(event, context):
         if parsed.mode == "video":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE VIDEO: {prompt}")
+            backend = _backend_for_mode("video", parsed.backend_override)
             provider = providers.get_video_provider(parsed.backend_override)
             source_image = (
                 media_refs.resolve_reference_image(source_ref)
                 if source_ref else None
             )
             references = media_refs.resolve_reference_images(reference_refs)
-            result = provider.generate(
-                prompt,
-                duration=parsed.video_duration,
-                source_image=source_image,
-                references=references,
+            result = _provider_call_or_record_failure(
+                user=user,
+                mode="video",
+                backend=backend,
+                model=_model_for_request("video", backend),
+                cost_estimate=_failure_cost_estimate(
+                    "video", backend, duration=parsed.video_duration,
+                ),
+                call=lambda: provider.generate(
+                    prompt,
+                    duration=parsed.video_duration,
+                    source_image=source_image,
+                    references=references,
+                ),
             )
+            usage.record_usage(user, result)
             print("GENERATE VIDEO COMPLETE")
             image_upload.upload_to_s3(prompt, result.content, extension="mp4",
                                      user=user, channel=channel_name,
@@ -158,15 +170,25 @@ def ai_slop_bot(event, context):
             video_thread_ts = thread_ts if source == "event_mention" else None
             slack.post_video_response(channel_id, user, parsed.display_text,
                                       result.content, thread_ts=video_thread_ts)
-            usage.record_usage(user, result)
             return
 
         if parsed.mode == "image":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE IMAGE: {prompt}")
+            backend = _backend_for_mode("image", parsed.backend_override)
             provider = providers.get_image_provider(parsed.backend_override)
             references = media_refs.resolve_reference_images(reference_refs)
-            result = provider.generate(prompt, references=references)
+            result = _provider_call_or_record_failure(
+                user=user,
+                mode="image",
+                backend=backend,
+                model=_model_for_request("image", backend),
+                cost_estimate=_failure_cost_estimate(
+                    "image", backend, reference_count=len(references),
+                ),
+                call=lambda: provider.generate(prompt, references=references),
+            )
+            usage.record_usage(user, result)
             print("GENERATE IMAGE COMPLETE")
             url = image_upload.upload_to_s3(prompt, result.content,
                                           user=user, channel=channel_name,
@@ -178,7 +200,6 @@ def ai_slop_bot(event, context):
                 )
             else:
                 slack.post_image_response(response_url, user, parsed.display_text, url)
-            usage.record_usage(user, result)
             return
 
         # Text mode: route to conversation handler if applicable.
@@ -214,11 +235,19 @@ def ai_slop_bot(event, context):
         # were silently ignored above).
         system = prompts.get_system_message(user, parsed.potato_mode)
         print(f"GENERATE TEXT: {system}, {parsed.prompt_text}")
+        backend = _backend_for_mode("text", parsed.backend_override)
         provider = providers.get_text_provider(parsed.backend_override)
-        result = provider.generate(system, parsed.prompt_text)
+        result = _provider_call_or_record_failure(
+            user=user,
+            mode="text",
+            backend=backend,
+            model=_model_for_request("text", backend),
+            cost_estimate=0.0,
+            call=lambda: provider.generate(system, parsed.prompt_text),
+        )
+        usage.record_usage(user, result)
         print(f"GENERATE TEXT COMPLETE: {result.content}")
         slack.post_text_response(response_url, user, parsed.display_text, result.content)
-        usage.record_usage(user, result)
 
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
@@ -261,6 +290,94 @@ def _blocks_to_text(blocks: list) -> str:
         if text:
             parts.append(text)
     return "\n".join(parts)
+
+
+def _provider_call_or_record_failure(*, user: str, mode: str, backend: str,
+                                     model: str, cost_estimate: float, call):
+    """Run a provider call, recording failed attempts before re-raising."""
+    try:
+        return call()
+    except Exception as exc:
+        usage.record_failed_request(
+            user,
+            mode=mode,
+            backend=backend,
+            model=model,
+            error_type=_classify_provider_error(exc),
+            error_message=str(exc),
+            cost_estimate=cost_estimate,
+            exc=exc,
+        )
+        raise
+
+
+def _backend_for_mode(mode: str, override: str | None) -> str:
+    """Resolve the provider name that will be used for a request mode."""
+    if mode == "text":
+        return override or os.environ.get("TEXT_BACKEND", "gemini")
+    if mode == "image":
+        return override or os.environ.get("IMAGE_BACKEND", "grok")
+    if mode == "video":
+        return override or os.environ.get("VIDEO_BACKEND", "grok")
+    return override or ""
+
+
+def _model_for_request(mode: str, backend: str) -> str:
+    """Best-effort model label for failed calls that return no GenerationResult."""
+    if mode == "text":
+        defaults = {
+            "anthropic": "claude-sonnet-4-6",
+            "gemini": "gemini-3.5-flash",
+            "grok": "grok-4-1-fast-non-reasoning",
+            "openai": "gpt-5.5",
+        }
+        return os.environ.get("TEXT_MODEL", defaults.get(backend, ""))
+    if mode == "image":
+        defaults = {
+            "gemini": "gemini-3.1-flash-image",
+            "grok": "grok-imagine-image-quality",
+            "openai": "dall-e-3",
+        }
+        return os.environ.get("IMAGE_MODEL", defaults.get(backend, ""))
+    if mode == "video":
+        defaults = {
+            "gemini": "veo-3.1-fast-generate-preview",
+            "grok": "grok-imagine-video",
+        }
+        return os.environ.get("VIDEO_MODEL", defaults.get(backend, ""))
+    return ""
+
+
+def _failure_cost_estimate(
+    mode: str,
+    backend: str,
+    *,
+    duration: int | None = None,
+    reference_count: int = 0,
+) -> float:
+    """Fallback cost for failed attempts when the provider omits actual cost."""
+    if mode == "image":
+        return usage.COST_PER_IMAGE.get(backend, 0.0) * max(1, 1 + reference_count)
+    if mode == "video":
+        default_seconds = "8" if backend == "gemini" else "10"
+        seconds = duration or int(os.environ.get("VIDEO_DURATION", default_seconds))
+        if backend == "gemini":
+            seconds = min((4, 6, 8), key=lambda supported: abs(supported - seconds))
+        return seconds * usage.COST_PER_VIDEO.get(backend, 0.0)
+    return 0.0
+
+
+def _classify_provider_error(exc: Exception) -> str:
+    """Classify provider errors for audit summaries."""
+    error_type = getattr(exc, "error_type", None)
+    if error_type:
+        return error_type
+    text = str(exc).lower()
+    if "moderation" in text or "safety" in text or "policy" in text:
+        return "moderation"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    return "provider_error"
 
 
 def _collect_media_references(parsed, payload_references: list[media_refs.ReferenceImage]):
@@ -336,9 +453,18 @@ def _handle_first_turn(*, parsed, user, channel_id, response_url, lambda_start):
     if (time.time() - lambda_start) > conversations.IN_HANDLER_ABORT_SECONDS:
         slack.post_error(response_url, "Aborting before model call to avoid Lambda timeout.")
         return
+    backend = _backend_for_mode("text", parsed.backend_override)
     provider = providers.get_text_provider(parsed.backend_override)
     print(f"GENERATE TEXT (conv turn 1): {parsed.prompt_text}")
-    result = provider.chat(effective_system, [user_msg])
+    result = _provider_call_or_record_failure(
+        user=user,
+        mode="text",
+        backend=backend,
+        model=_model_for_request("text", backend),
+        cost_estimate=0.0,
+        call=lambda: provider.chat(effective_system, [user_msg]),
+    )
+    usage.record_usage(user, result)
     print(f"GENERATE TEXT COMPLETE: {result.content}")
     user_msg["backend"] = result.backend
     assistant_msg = conversations.build_assistant_message(result)
@@ -369,10 +495,7 @@ def _handle_first_turn(*, parsed, user, channel_id, response_url, lambda_start):
                 " this thread won't continue the conversation."
             ),
         )
-        usage.record_usage(user, result)
         raise
-
-    usage.record_usage(user, result)
 
 
 def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing_conv,
@@ -436,9 +559,18 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
             )
             return
 
+        backend = _backend_for_mode("text", parsed.backend_override)
         provider = providers.get_text_provider(parsed.backend_override)
         print(f"GENERATE TEXT (conv turn {conv.turn_count + 1}): {parsed.prompt_text}")
-        result = provider.chat(effective_system, api_messages)
+        result = _provider_call_or_record_failure(
+            user=user,
+            mode="text",
+            backend=backend,
+            model=_model_for_request("text", backend),
+            cost_estimate=0.0,
+            call=lambda: provider.chat(effective_system, api_messages),
+        )
+        usage.record_usage(user, result)
         print(f"GENERATE TEXT COMPLETE: {result.content}")
         user_msg["backend"] = result.backend
         assistant_msg = conversations.build_assistant_message(result)
@@ -481,7 +613,6 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
                 response=result.content, thread_ts=thread_ts,
                 footer_blocks=footer_blocks,
             )
-        usage.record_usage(user, result)
     finally:
         conversations.release_lock(conv_id, request_id)
 

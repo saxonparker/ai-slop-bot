@@ -10,7 +10,7 @@ import requests
 sys.path.append(".")
 
 from media_refs import ResolvedImage
-from usage import GenerationResult
+from usage import GenerationResult, ProviderGenerationError
 
 
 # ── Anthropic Text ───────────────────────────────────────────────────────────
@@ -721,15 +721,22 @@ def test_grok_video_failed_raises(mock_requests):
     mock_submit.raise_for_status = MagicMock()
 
     mock_status = MagicMock()
-    mock_status.json.return_value = {"status": "failed"}
+    mock_status.json.return_value = {
+        "status": "failed",
+        "usage": {"cost_in_usd_ticks": 3500000000},
+    }
     mock_status.raise_for_status = MagicMock()
 
     mock_requests.post.return_value = mock_submit
     mock_requests.get.return_value = mock_status
 
     with patch("backends.grok_video.time.sleep"):
-        with pytest.raises(RuntimeError, match="Video generation failed"):
+        with pytest.raises(ProviderGenerationError, match="Video generation failed") as exc_info:
             GrokProvider().generate("a dancing cat")
+
+    assert exc_info.value.cost_actual == 0.35
+    assert exc_info.value.cost_in_usd_ticks == 3500000000
+    assert exc_info.value.cost_estimate == 10 * 0.05
 
 
 # ── Gemini Video (Veo) ───────────────────────────────────────────────────────

@@ -110,7 +110,7 @@ def test_continuation_phantom_turn_dropped(mock_acquire, mock_get, mock_append,
     err_msg = mock_slack.post_error.call_args.args[1]
     assert "modified by another in-flight turn" in err_msg
     mock_slack.post_text_response_in_thread.assert_not_called()
-    mock_record.assert_not_called()
+    mock_record.assert_called_once()
     mock_release.assert_called_once_with("C:1700.0", "req-A")
 
 
@@ -404,6 +404,38 @@ def test_event_mention_image_posts_in_thread(
     assert args[1] == "alice"
     assert args[4] == "1700.0"
     mock_slack.post_image_response.assert_not_called()
+
+
+@patch("ai_slop_bot.usage.record_failed_request")
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_image_provider")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+def test_image_provider_failure_records_failed_request(
+    _mock_sanitize, mock_get_provider, mock_slack, mock_record, mock_failed,
+):
+    provider = MagicMock()
+    provider.generate.side_effect = RuntimeError("blocked by moderation")
+    mock_get_provider.return_value = provider
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "", "prompt": "-i make art", "user": "alice",
+        "source": "slash",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    mock_record.assert_not_called()
+    mock_failed.assert_called_once()
+    args = mock_failed.call_args.args
+    kwargs = mock_failed.call_args.kwargs
+    assert args[0] == "alice"
+    assert kwargs["mode"] == "image"
+    assert kwargs["backend"] == "grok"
+    assert kwargs["error_type"] == "moderation"
+    assert kwargs["cost_estimate"] == 0.05
+    mock_slack.post_error.assert_called_once()
 
 
 @patch("ai_slop_bot.usage.record_usage")
