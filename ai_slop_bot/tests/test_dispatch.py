@@ -240,13 +240,16 @@ def test_upload_slash_command_opens_modal(mock_boto, mock_urlopen):
     metadata = json.loads(view["private_metadata"])
     assert metadata["mode"] == "video"
     blocks = {block["block_id"]: block for block in view["blocks"]}
-    assert {"video_op_block", "video_url_block"}.issubset(blocks)
+    assert "video_op_block" in blocks
     video_op = blocks["video_op_block"]["element"]
     assert [option["value"] for option in video_op["options"]] == [
         "generate", "edit", "extend",
     ]
     assert video_op["initial_option"]["value"] == "generate"
-    assert blocks["video_url_block"]["optional"] is True
+    assert blocks["video_op_block"]["dispatch_action"] is True
+    assert "video_url_block" not in blocks
+    assert "source_video_block" not in blocks
+    assert "reference_role_block" in blocks
     assert blocks["files_block"]["optional"] is True
 
 
@@ -256,7 +259,7 @@ def test_upload_slash_command_opens_modal(mock_boto, mock_urlopen):
 })
 @patch("ai_slop_dispatch.urllib.request.urlopen")
 @patch("ai_slop_dispatch.boto3.client")
-def test_video_upload_slash_command_modal_includes_video_source_blocks(mock_boto, mock_urlopen):
+def test_video_upload_slash_command_generate_modal_hides_video_source_blocks(mock_boto, mock_urlopen):
     mock_boto.return_value = MagicMock()
     mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
 
@@ -271,7 +274,11 @@ def test_video_upload_slash_command_modal_includes_video_source_blocks(mock_boto
     payload = json.loads(request.data.decode("utf-8"))
     blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
     assert "video_op_block" in blocks
-    assert "video_url_block" in blocks
+    assert "duration_block" in blocks
+    assert "reference_role_block" in blocks
+    assert "files_block" in blocks
+    assert "video_url_block" not in blocks
+    assert "source_video_block" not in blocks
 
 
 @patch.dict("os.environ", {
@@ -297,11 +304,80 @@ def test_video_edit_upload_slash_command_prefills_modal(mock_boto, mock_urlopen)
     payload = json.loads(request.data.decode("utf-8"))
     blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
     assert blocks["video_op_block"]["element"]["initial_option"]["value"] == "extend"
+    assert "source_video_block" in blocks
+    assert blocks["source_video_block"]["optional"] is True
+    assert blocks["source_video_block"]["element"]["filetypes"] == ["mp4", "mov", "webm"]
+    assert blocks["source_video_block"]["element"]["max_files"] == 1
     assert (
         blocks["video_url_block"]["element"]["initial_value"]
         == "https://example.com/source.mp4"
     )
+    assert "reference_role_block" not in blocks
+    assert "files_block" not in blocks
     assert blocks["prompt_block"]["element"]["initial_value"] == "keep going"
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_video_operation_select_updates_modal_fields(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+    metadata = {
+        "response_url": "https://hooks.slack.example/dispatch",
+        "channel_id": "C123",
+        "channel_name": "general",
+        "user": "alice",
+        "mode": "video",
+    }
+    payload = {
+        "type": "block_actions",
+        "actions": [
+            {
+                "action_id": "video_op",
+                "selected_option": {"value": "edit"},
+            }
+        ],
+        "view": {
+            "id": "V123",
+            "hash": "h123",
+            "callback_id": "ai_slop_upload",
+            "private_metadata": json.dumps(metadata),
+            "state": {
+                "values": {
+                    "prompt_block": {"prompt": {"value": "make it rain"}},
+                    "backend_block": {
+                        "backend": {"selected_option": {"value": "grok"}}
+                    },
+                    "duration_block": {"duration": {"value": "12"}},
+                    "reference_role_block": {
+                        "reference_role": {"selected_option": {"value": "start"}}
+                    },
+                    "files_block": {"files": {"files": []}},
+                }
+            },
+        },
+    }
+
+    response = ai_slop_dispatch.dispatch(_interaction_request(payload), None)
+
+    assert response["statusCode"] == "200"
+    request = mock_urlopen.call_args.args[0]
+    update = json.loads(request.data.decode("utf-8"))
+    assert request.full_url.endswith("/views.update")
+    assert update["view_id"] == "V123"
+    assert update["hash"] == "h123"
+    blocks = {block["block_id"]: block for block in update["view"]["blocks"]}
+    assert blocks["video_op_block"]["element"]["initial_option"]["value"] == "edit"
+    assert blocks["prompt_block"]["element"]["initial_value"] == "make it rain"
+    assert blocks["duration_block"]["element"]["initial_value"] == "12"
+    assert "video_url_block" in blocks
+    assert "source_video_block" in blocks
+    assert "reference_role_block" not in blocks
+    assert "files_block" not in blocks
 
 
 @patch.dict("os.environ", {
@@ -385,7 +461,13 @@ def _interaction_request(payload: dict):
     }
 
 
-def _video_source_submission_payload(video_op: str, video_url: str):
+def _video_source_submission_payload(
+    video_op: str,
+    video_url: str,
+    *,
+    source_video_files: list[dict] | None = None,
+    image_files: list[dict] | None = None,
+):
     metadata = {
         "response_url": "https://hooks.slack.example/dispatch",
         "channel_id": "C123",
@@ -411,6 +493,10 @@ def _video_source_submission_payload(video_op: str, video_url: str):
                     "video_url_block": {
                         "video_url": {"value": video_url}
                     },
+                    "source_video_block": {
+                        "source_video": {"files": source_video_files or []}
+                    },
+                    "files_block": {"files": {"files": image_files or []}},
                 }
             },
         },
@@ -510,18 +596,90 @@ def test_upload_modal_video_extend_submission_publishes_command_without_files(mo
 
 @patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
 @patch("ai_slop_dispatch.boto3.client")
-def test_upload_modal_video_edit_submission_rejects_missing_or_invalid_url(mock_boto):
+def test_upload_modal_video_edit_submission_accepts_uploaded_source_video(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+    mock_sns.publish.return_value = {"MessageId": "abc"}
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(
+            _video_source_submission_payload(
+                "edit",
+                "",
+                source_video_files=[
+                    {"id": "FV123", "mimetype": "video/mp4", "name": "source.mp4"}
+                ],
+            )
+        ),
+        None,
+    )
+
+    assert response["statusCode"] == "200"
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    sns_msg = json.loads(inner["default"])
+    assert sns_msg["prompt"] == "-v 12 -b grok make it rain"
+    assert sns_msg["reference_images"] == []
+    assert sns_msg["source_video"] == {
+        "source": "slack_file",
+        "value": "FV123",
+        "mime_type": "video/mp4",
+        "filename": "source.mp4",
+        "role": "edit",
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_video_edit_submission_rejects_missing_source_video(mock_boto):
     mock_sns = MagicMock()
     mock_boto.return_value = mock_sns
 
-    for video_url in ("", "not-a-url"):
-        mock_sns.reset_mock()
-        response = ai_slop_dispatch.dispatch(
-            _interaction_request(_video_source_submission_payload("edit", video_url)),
-            None,
-        )
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_video_source_submission_payload("edit", "")),
+        None,
+    )
 
-        body = json.loads(response["body"])
-        assert body["response_action"] == "errors"
-        assert "video_url_block" in body["errors"]
-        mock_sns.publish.assert_not_called()
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert "source_video_block" in body["errors"]
+    mock_sns.publish.assert_not_called()
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_video_edit_submission_rejects_invalid_url(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_video_source_submission_payload("edit", "not-a-url")),
+        None,
+    )
+
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert "video_url_block" in body["errors"]
+    mock_sns.publish.assert_not_called()
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_video_edit_submission_rejects_url_and_upload(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(
+            _video_source_submission_payload(
+                "edit",
+                "https://example.com/source.mp4",
+                source_video_files=[{"id": "FV123"}],
+            )
+        ),
+        None,
+    )
+
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert "source_video_block" in body["errors"]
+    mock_sns.publish.assert_not_called()

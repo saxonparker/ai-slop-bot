@@ -11,6 +11,12 @@ from PIL import Image
 
 BUCKET = "dallepics"
 MANIFEST_KEY = "dalle/manifest.json"
+CONTENT_TYPES = {
+    "jpeg": "image/jpeg",
+    "mp4": "video/mp4",
+    "mov": "video/quicktime",
+    "webm": "video/webm",
+}
 
 
 def _update_manifest(s3_client, key: str, user: str, channel: str, model: str):
@@ -37,16 +43,17 @@ def upload_to_s3(prompt: str, file_bytes: bytes, extension: str = "jpeg",
                  user: str = "", channel: str = "", model: str = "") -> str:
     """Compress (if image) and upload to S3, returning the CloudFront URL."""
     s3_client = boto3.client("s3")
+    extension = extension.lower().lstrip(".")
 
     if extension == "jpeg":
         image = Image.open(io.BytesIO(file_bytes))
         compressed = io.BytesIO()
         image.save(compressed, "JPEG", optimize=True, quality=50)
         compressed.seek(0)
-        content_type = "image/jpeg"
+        content_type = CONTENT_TYPES[extension]
     else:
         compressed = io.BytesIO(file_bytes)
-        content_type = "video/mp4" if extension == "mp4" else f"application/{extension}"
+        content_type = CONTENT_TYPES.get(extension, f"application/{extension}")
 
     rand_tag = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
     slug = prompt[:512].replace(" ", "_")

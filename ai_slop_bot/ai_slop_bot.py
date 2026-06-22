@@ -46,6 +46,15 @@ def ai_slop_bot(event, context):
             media_refs.ReferenceImage.from_payload(ref)
             for ref in message.get("reference_images", [])
         ]
+        payload_source_video = media_refs.ReferenceVideo.from_payload(
+            message.get("source_video")
+        )
+        if payload_source_video:
+            parsed = dataclasses.replace(
+                parsed,
+                video_op=payload_source_video.role,
+                video_source_url=None,
+            )
         source_ref, reference_refs = _collect_media_references(parsed, payload_references)
         validation_error = _validate_media_references(parsed, source_ref, reference_refs)
         if validation_error:
@@ -145,12 +154,24 @@ def ai_slop_bot(event, context):
             if parsed.video_op:
                 source_image = None
                 references = []
+                video_url = parsed.video_source_url
+                if payload_source_video:
+                    source_video = media_refs.resolve_reference_video(payload_source_video)
+                    video_url = image_upload.upload_to_s3(
+                        prompt,
+                        source_video.data,
+                        extension=source_video.extension,
+                        user=user,
+                        channel=channel_name,
+                        model="source-video",
+                    )
             else:
                 source_image = (
                     media_refs.resolve_reference_image(source_ref)
                     if source_ref else None
                 )
                 references = media_refs.resolve_reference_images(reference_refs)
+                video_url = None
             result = _provider_call_or_record_failure(
                 user=user,
                 mode="video",
@@ -165,7 +186,7 @@ def ai_slop_bot(event, context):
                     source_image=source_image,
                     references=references,
                     video_op=parsed.video_op,
-                    video_url=parsed.video_source_url,
+                    video_url=video_url,
                 ),
             )
             usage.record_usage(user, result)

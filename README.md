@@ -14,7 +14,7 @@ Unified Slack AI command (`/ai-slop`) with pluggable provider backends.
 - `/ai-slop -v --edit-video <video-url> <prompt>` — edit an existing video (Grok only)
 - `/ai-slop -v --extend-video <video-url> <prompt>` — extend a video from its last frame (Grok only)
 - `/ai-slop -i --upload` or `/ai-slop -i --edit` — open a Slack upload modal for temporary image references
-- `/ai-slop -v --upload` — open a Slack upload modal for temporary video references
+- `/ai-slop -v --upload` — open a Slack upload modal for temporary image references or source videos
 - `/ai-slop -e <prompt>` — emoji-only text response
 - `/ai-slop -c <prompt>` — start a multi-turn text conversation in a thread
 - `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
@@ -41,11 +41,12 @@ There are two ways to provide reference media for generated content:
   - `/ai-slop -i --upload` opens an image prompt form with 1-3 uploaded references.
   - `/ai-slop -i --edit` opens the same form for editing an uploaded image.
   - `/ai-slop -i --edit make this watercolor` opens the form with the prompt pre-filled.
-  - `/ai-slop -v --upload` opens a video prompt form where uploads can be a single start frame or loose references.
+  - `/ai-slop -v --upload` opens a video prompt form where image uploads can be a single start frame or loose references, and source video uploads can be used for edit/extend.
 
 Uploaded modal files are temporary. Slack stores them briefly, then the bot
-downloads and deletes them after it has normalized the images for provider
-calls. Generated outputs still use the existing S3/CloudFront upload path.
+downloads and deletes them after it has normalized images or staged source
+videos through the existing S3/CloudFront upload path for provider calls.
+Generated outputs still use the same S3/CloudFront upload path.
 
 Backend support differs slightly:
 
@@ -156,8 +157,8 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
    - **OAuth & Permissions** → Bot Token Scopes:
      - `chat:write` - write messages
      - `commands` - receive slash commands
-     - `files:read` - read uploaded reference images
-     - `files:write` - upload generated videos and delete temporary reference images
+     - `files:read` - read uploaded reference images and source videos
+     - `files:write` - upload generated videos and delete temporary reference/source files
      - `app_mentions:read` — receive `@slop-bot` events
      - `users:read` — resolve user IDs to display names in transcripts
    - Reinstall the app to your workspace after changing scopes; copy the

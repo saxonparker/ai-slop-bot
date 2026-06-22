@@ -65,3 +65,14 @@ def test_upload_to_s3_truncates_long_prompts(mock_boto_client):
     filename = s3_key.removeprefix("dalle/")
     # 512 a's + _ + 10 rand + .jpeg
     assert len(filename) == 512 + 1 + 10 + 5
+
+
+@patch("image_upload.boto3.client")
+def test_upload_to_s3_sets_video_content_type(mock_boto_client):
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+
+    image_upload.upload_to_s3("source clip", b"video", extension="mov")
+
+    extra_args = mock_s3.upload_fileobj.call_args.kwargs["ExtraArgs"]
+    assert extra_args["ContentType"] == "video/quicktime"

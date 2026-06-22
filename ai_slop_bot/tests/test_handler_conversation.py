@@ -17,7 +17,7 @@ sys.path.append(".")
 
 import ai_slop_bot  # noqa: E402  pylint: disable=wrong-import-position
 import conversations  # noqa: E402  pylint: disable=wrong-import-position
-from media_refs import ReferenceImage, ResolvedImage  # noqa: E402  pylint: disable=wrong-import-position
+from media_refs import ReferenceImage, ResolvedImage, ResolvedVideo  # noqa: E402  pylint: disable=wrong-import-position
 from parsing import ParsedCommand  # noqa: E402  pylint: disable=wrong-import-position
 
 
@@ -538,6 +538,66 @@ def test_video_edit_is_passed_to_provider_without_image_refs(
         video_url="https://example.com/source.mp4",
     )
     assert mock_upload.call_args.kwargs["extension"] == "mp4"
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_video_provider")
+@patch(
+    "ai_slop_bot.image_upload.upload_to_s3",
+    side_effect=["https://cdn.example/source.mp4", "https://cdn.example/generated.mp4"],
+)
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+@patch("ai_slop_bot.media_refs.resolve_reference_images")
+@patch("ai_slop_bot.media_refs.resolve_reference_image")
+@patch("ai_slop_bot.media_refs.resolve_reference_video")
+def test_uploaded_source_video_is_uploaded_and_passed_to_provider(
+    mock_resolve_video, mock_resolve_one, mock_resolve_many, _mock_sanitize,
+    mock_upload, mock_get_provider, _mock_slack, _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"video-bytes")
+    mock_get_provider.return_value = provider
+    mock_resolve_video.return_value = ResolvedVideo(
+        data=b"source-video",
+        mime_type="video/mp4",
+        extension="mp4",
+        role="edit",
+        source="slack_file",
+        file_id="FV123",
+    )
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "general",
+        "thread_ts": "", "prompt": "-v 12 -b grok make it rain",
+        "user": "alice", "source": "slash",
+        "source_video": {
+            "source": "slack_file",
+            "value": "FV123",
+            "role": "edit",
+            "mime_type": "video/mp4",
+            "filename": "source.mp4",
+        },
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    mock_resolve_one.assert_not_called()
+    mock_resolve_many.assert_not_called()
+    mock_resolve_video.assert_called_once()
+    first_upload = mock_upload.call_args_list[0]
+    assert first_upload.args[:2] == ("make it rain", b"source-video")
+    assert first_upload.kwargs["extension"] == "mp4"
+    assert first_upload.kwargs["model"] == "source-video"
+    provider.generate.assert_called_once_with(
+        "make it rain",
+        duration=12,
+        source_image=None,
+        references=[],
+        video_op="edit",
+        video_url="https://cdn.example/source.mp4",
+    )
+    assert mock_upload.call_args_list[1].kwargs["extension"] == "mp4"
 
 
 def test_video_edit_rejects_image_references():

@@ -41,14 +41,14 @@ HELP_TEXT = """*slop-bot* — AI text, image, and video generation
 *Reference images:*
   `/slop-bot -i --upload` — open a form to upload 1-3 temporary image references
   `/slop-bot -i --edit` — open the same form for an uploaded image edit
-  `/slop-bot -v --upload` — open a form to upload a start frame or loose video references, or choose edit/extend
+  `/slop-bot -v --upload` — open a form to upload a start frame, loose image references, or a source video for edit/extend
   `/slop-bot -i --edit <image-url> turn this into a watercolor painting`
   `/slop-bot -i --ref <image-url> make something in this style`
   `/slop-bot -v --start <image-url> slow cinematic push in`
   `/slop-bot -v --ref <image-url> --ref <image-url> combine these subjects`
   `/slop-bot -v --edit-video <video-url> restyle this clip` — edit an existing video (Grok only)
   `/slop-bot -v --extend-video <video-url> keep the action going` — extend a video from its last frame (Grok only)
-  Uploaded reference files are deleted from Slack after the bot downloads them.
+  Uploaded reference/source files are deleted from Slack after the bot downloads them.
 
 *Conversations:*
   `/slop-bot -c <prompt>` starts a multi-turn text conversation rooted in a
@@ -161,6 +161,8 @@ def _handle_interaction(event):
         return _json_response("missing interaction payload")
 
     payload = json.loads(raw_payload)
+    if payload.get("type") == "block_actions":
+        return _handle_block_action(payload)
     if payload.get("type") != "view_submission":
         return _json_payload({})
     view = payload.get("view") or {}
@@ -171,6 +173,47 @@ def _handle_interaction(event):
     if errors:
         return _json_payload({"response_action": "errors", "errors": errors})
     _publish(message)
+    return _json_payload({})
+
+
+def _handle_block_action(payload: dict):
+    """Update the upload modal when a stateful select changes."""
+    view = payload.get("view") or {}
+    if view.get("callback_id") != "ai_slop_upload":
+        return _json_payload({})
+    actions = payload.get("actions") or []
+    action = next(
+        (item for item in actions if item.get("action_id") == "video_op"),
+        None,
+    )
+    if action is None:
+        return _json_payload({})
+
+    metadata = json.loads(view.get("private_metadata") or "{}")
+    if metadata.get("mode") != "video":
+        return _json_payload({})
+
+    state = (view.get("state") or {}).get("values") or {}
+    upload_options = {
+        "mode": "video",
+        "prompt": (_state_value(state, "prompt_block", "prompt").get("value") or ""),
+        "backend": _selected_value(_state_value(state, "backend_block", "backend")),
+        "duration": (_state_value(state, "duration_block", "duration").get("value") or ""),
+        "video_op": _selected_value(action) or "generate",
+        "video_url": (
+            _state_value(state, "video_url_block", "video_url").get("value") or ""
+        ),
+        "reference_role": _selected_value(
+            _state_value(state, "reference_role_block", "reference_role")
+        ),
+    }
+    request = {
+        "view_id": view.get("id"),
+        "view": _upload_view(metadata, upload_options),
+    }
+    if view.get("hash"):
+        request["hash"] = view["hash"]
+    _slack_api_post("views.update", request)
     return _json_payload({})
 
 
@@ -351,6 +394,30 @@ def _open_upload_modal(params: dict, upload_options: dict):
         "user": params.get("user_name", ""),
         "mode": mode,
     }
+    payload = {
+        "trigger_id": params["trigger_id"],
+        "view": _upload_view(metadata, upload_options),
+    }
+    _slack_api_post("views.open", payload)
+
+
+def _upload_view(metadata: dict, upload_options: dict) -> dict:
+    """Build the Slack modal view for the current upload options."""
+    mode = metadata.get("mode", upload_options.get("mode", "image"))
+    return {
+        "type": "modal",
+        "callback_id": "ai_slop_upload",
+        "private_metadata": json.dumps(metadata),
+        "title": {"type": "plain_text", "text": "slop-bot"},
+        "submit": {"type": "plain_text", "text": "Generate"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": _upload_blocks({**upload_options, "mode": mode}),
+    }
+
+
+def _upload_blocks(upload_options: dict) -> list[dict]:
+    """Build upload modal blocks for the current mode and video operation."""
+    mode = upload_options["mode"]
     blocks = [
         {
             "type": "input",
@@ -370,10 +437,13 @@ def _open_upload_modal(params: dict, upload_options: dict):
         },
     ]
     if mode == "video":
+        video_op = upload_options.get("video_op") or "generate"
+        video_op = video_op if video_op in ("generate", "edit", "extend") else "generate"
         blocks.extend([
             {
                 "type": "input",
                 "block_id": "video_op_block",
+                "dispatch_action": True,
                 "label": {"type": "plain_text", "text": "Video operation"},
                 "element": {
                     "type": "static_select",
@@ -385,35 +455,61 @@ def _open_upload_modal(params: dict, upload_options: dict):
                     ],
                     "initial_option": _option(
                         {
+                            "generate": "Generate",
                             "edit": "Edit",
                             "extend": "Extend",
-                        }.get(upload_options.get("video_op", ""), "Generate"),
-                        upload_options.get("video_op", "generate"),
+                        }[video_op],
+                        video_op,
                     ),
                 },
             },
+        ])
+        if video_op in ("edit", "extend"):
+            blocks.extend([
+                {
+                    "type": "input",
+                    "block_id": "video_url_block",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "Source video URL"},
+                    "element": _plain_text_input(
+                        "video_url",
+                        initial_value=upload_options.get("video_url", ""),
+                    ),
+                },
+                {
+                    "type": "input",
+                    "block_id": "source_video_block",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "Source video upload"},
+                    "element": {
+                        "type": "file_input",
+                        "action_id": "source_video",
+                        "filetypes": ["mp4", "mov", "webm"],
+                        "max_files": 1,
+                    },
+                },
+            ])
+        blocks.append(
             {
                 "type": "input",
-                "block_id": "video_url_block",
                 "optional": True,
-                "label": {"type": "plain_text", "text": "Source video URL"},
-                "element": _plain_text_input(
-                    "video_url",
-                    initial_value=upload_options.get("video_url", ""),
-                ),
-            },
-            {
-                "type": "input",
                 "block_id": "duration_block",
-                "optional": True,
                 "label": {"type": "plain_text", "text": "Duration"},
                 "element": _plain_text_input(
                     "duration",
                     initial_value=upload_options.get("duration", ""),
                     placeholder="10",
                 ),
-            },
-            {
+            }
+        )
+        if video_op == "generate":
+            reference_role = upload_options.get("reference_role") or "start"
+            reference_role = (
+                reference_role
+                if reference_role in ("start", "reference")
+                else "start"
+            )
+            blocks.append({
                 "type": "input",
                 "block_id": "reference_role_block",
                 "label": {"type": "plain_text", "text": "Image role"},
@@ -424,14 +520,22 @@ def _open_upload_modal(params: dict, upload_options: dict):
                         _option("Start frame", "start"),
                         _option("Loose reference", "reference"),
                     ],
-                    "initial_option": _option("Start frame", "start"),
+                    "initial_option": _option(
+                        "Start frame" if reference_role == "start" else "Loose reference",
+                        reference_role,
+                    ),
                 },
-            },
-        ])
+            })
+    if mode == "video" and upload_options.get("video_op") in ("edit", "extend"):
+        return blocks
+
     files_block = {
         "type": "input",
         "block_id": "files_block",
-        "label": {"type": "plain_text", "text": "Reference images"},
+        "label": {
+            "type": "plain_text",
+            "text": "Reference images" if mode == "image" else "Reference images / start frame",
+        },
         "element": {
             "type": "file_input",
             "action_id": "files",
@@ -442,20 +546,7 @@ def _open_upload_modal(params: dict, upload_options: dict):
     if mode == "video":
         files_block["optional"] = True
     blocks.append(files_block)
-
-    payload = {
-        "trigger_id": params["trigger_id"],
-        "view": {
-            "type": "modal",
-            "callback_id": "ai_slop_upload",
-            "private_metadata": json.dumps(metadata),
-            "title": {"type": "plain_text", "text": "slop-bot"},
-            "submit": {"type": "plain_text", "text": "Generate"},
-            "close": {"type": "plain_text", "text": "Cancel"},
-            "blocks": blocks,
-        },
-    }
-    _slack_api_post("views.open", payload)
+    return blocks
 
 
 def _plain_text_input(action_id: str, *, initial_value: str = "",
@@ -511,18 +602,28 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     duration = (_state_value(state, "duration_block", "duration").get("value") or "").strip()
     video_op = _selected_value(_state_value(state, "video_op_block", "video_op"))
     video_url = (_state_value(state, "video_url_block", "video_url").get("value") or "").strip()
+    source_video_refs = _file_refs(_state_value(state, "source_video_block", "source_video"))
     role = _selected_value(_state_value(state, "reference_role_block", "reference_role"))
-    file_ids = _file_ids(_state_value(state, "files_block", "files"))
+    file_refs = _file_refs(_state_value(state, "files_block", "files"))
     is_video_source_op = mode == "video" and video_op in ("edit", "extend")
 
     errors = {}
     if not prompt:
         errors["prompt_block"] = "Enter a prompt."
-    if is_video_source_op and not _looks_like_url(video_url):
+    has_video_url = bool(video_url) and _looks_like_url(video_url)
+    if is_video_source_op and video_url and not has_video_url:
         errors["video_url_block"] = "Enter an http or https source video URL."
-    if not file_ids and not is_video_source_op:
+    if is_video_source_op and has_video_url and source_video_refs:
+        errors["source_video_block"] = "Use either a source video URL or an upload, not both."
+    if is_video_source_op and not has_video_url and not source_video_refs:
+        errors["source_video_block"] = "Upload a source video or enter a source video URL."
+    if is_video_source_op and file_refs:
+        errors["files_block"] = "Reference images cannot be used with video edit/extend."
+    if not is_video_source_op and source_video_refs:
+        errors["source_video_block"] = "Choose Edit or Extend to use a source video."
+    if not file_refs and not is_video_source_op:
         errors["files_block"] = "Upload at least one image."
-    if mode == "video" and not is_video_source_op and role == "start" and len(file_ids) > 1:
+    if mode == "video" and not is_video_source_op and role == "start" and len(file_refs) > 1:
         errors["files_block"] = "Start-frame video accepts exactly one image."
     if duration:
         try:
@@ -538,11 +639,16 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     if backend:
         command_parts.extend(["-b", backend])
     if is_video_source_op:
-        command_parts.extend([
-            "--edit-video" if video_op == "edit" else "--extend-video",
-            video_url,
-            prompt,
-        ])
+        source_video = None
+        if has_video_url:
+            command_parts.extend([
+                "--edit-video" if video_op == "edit" else "--extend-video",
+                video_url,
+                prompt,
+            ])
+        else:
+            command_parts.append(prompt)
+            source_video = {**source_video_refs[0], "role": video_op}
         return {}, {
             "response_url": metadata.get("response_url", ""),
             "channel_id": metadata.get("channel_id", ""),
@@ -552,16 +658,16 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
             "user": metadata.get("user", ""),
             "source": "slash",
             "reference_images": [],
+            "source_video": source_video,
         }
     command_parts.append(prompt)
     reference_role = "edit" if mode == "image" else (role or "start")
     references = [
         {
-            "source": "slack_file",
-            "value": file_id,
+            **file_ref,
             "role": reference_role,
         }
-        for file_id in file_ids
+        for file_ref in file_refs
     ]
     return {}, {
         "response_url": metadata.get("response_url", ""),
@@ -584,11 +690,21 @@ def _selected_value(value: dict) -> str:
 
 
 def _file_ids(value: dict) -> list[str]:
+    return [ref["value"] for ref in _file_refs(value)]
+
+
+def _file_refs(value: dict) -> list[dict]:
     files = value.get("files") or []
-    ids = []
+    refs = []
     for file_obj in files:
         if isinstance(file_obj, str):
-            ids.append(file_obj)
+            refs.append({"source": "slack_file", "value": file_obj})
         elif file_obj.get("id"):
-            ids.append(file_obj["id"])
-    return ids
+            ref = {"source": "slack_file", "value": file_obj["id"]}
+            if file_obj.get("mimetype"):
+                ref["mime_type"] = file_obj["mimetype"]
+            filename = file_obj.get("name") or file_obj.get("title")
+            if filename:
+                ref["filename"] = filename
+            refs.append(ref)
+    return refs
