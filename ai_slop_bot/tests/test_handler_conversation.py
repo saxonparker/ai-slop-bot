@@ -17,7 +17,7 @@ sys.path.append(".")
 
 import ai_slop_bot  # noqa: E402  pylint: disable=wrong-import-position
 import conversations  # noqa: E402  pylint: disable=wrong-import-position
-from media_refs import ResolvedImage  # noqa: E402  pylint: disable=wrong-import-position
+from media_refs import ReferenceImage, ResolvedImage  # noqa: E402  pylint: disable=wrong-import-position
 from parsing import ParsedCommand  # noqa: E402  pylint: disable=wrong-import-position
 
 
@@ -497,7 +497,146 @@ def test_video_start_image_is_resolved_and_passed_to_provider(
         duration=10,
         source_image=resolved,
         references=[],
+        video_op=None,
+        video_url=None,
     )
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_video_provider")
+@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+@patch("ai_slop_bot.media_refs.resolve_reference_images")
+@patch("ai_slop_bot.media_refs.resolve_reference_image")
+def test_video_edit_is_passed_to_provider_without_image_refs(
+    mock_resolve_one, mock_resolve_many, _mock_sanitize, mock_upload,
+    mock_get_provider, _mock_slack, _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"video-bytes")
+    mock_get_provider.return_value = provider
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "",
+        "prompt": "-v --edit-video https://example.com/source.mp4 make it rain",
+        "user": "alice", "source": "slash",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    with patch.dict("ai_slop_bot.os.environ", {"VIDEO_BACKEND": "grok"}):
+        ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
+
+    mock_resolve_one.assert_not_called()
+    mock_resolve_many.assert_not_called()
+    provider.generate.assert_called_once_with(
+        "make it rain",
+        duration=None,
+        source_image=None,
+        references=[],
+        video_op="edit",
+        video_url="https://example.com/source.mp4",
+    )
+    assert mock_upload.call_args.kwargs["extension"] == "mp4"
+
+
+def test_video_edit_rejects_image_references():
+    parsed = ParsedCommand(
+        mode="video",
+        video_op="edit",
+        video_source_url="https://example.com/source.mp4",
+    )
+    reference = ReferenceImage(
+        source="url",
+        value="https://example.com/frame.jpg",
+        role="reference",
+    )
+
+    error = ai_slop_bot._validate_media_references(parsed, None, [reference])
+
+    assert error == "--edit-video/--extend-video cannot be combined with --start, --ref, or --edit."
+
+
+@pytest.mark.parametrize(
+    ("video_op", "source_ref", "reference_refs"),
+    [
+        (
+            "edit",
+            ReferenceImage(source="url", value="https://example.com/start.jpg", role="start"),
+            [],
+        ),
+        (
+            "edit",
+            None,
+            [ReferenceImage(source="url", value="https://example.com/ref.jpg", role="reference")],
+        ),
+        (
+            "extend",
+            ReferenceImage(source="url", value="https://example.com/start.jpg", role="start"),
+            [],
+        ),
+        (
+            "extend",
+            None,
+            [ReferenceImage(source="url", value="https://example.com/ref.jpg", role="reference")],
+        ),
+    ],
+)
+def test_video_edit_extend_rejects_start_and_ref_references(
+    video_op, source_ref, reference_refs,
+):
+    parsed = ParsedCommand(
+        mode="video",
+        video_op=video_op,
+        video_source_url="https://example.com/source.mp4",
+        backend_override="grok",
+    )
+
+    error = ai_slop_bot._validate_media_references(parsed, source_ref, reference_refs)
+
+    assert error == "--edit-video/--extend-video cannot be combined with --start, --ref, or --edit."
+
+
+@pytest.mark.parametrize("video_op", ["edit", "extend"])
+def test_video_edit_extend_rejects_non_grok_backend_override(video_op):
+    parsed = ParsedCommand(
+        mode="video",
+        video_op=video_op,
+        video_source_url="https://example.com/source.mp4",
+        backend_override="gemini",
+    )
+
+    error = ai_slop_bot._validate_media_references(parsed, None, [])
+
+    assert error == "Video edit/extend is only supported on the grok backend; use -b grok."
+
+
+@pytest.mark.parametrize("video_op", ["edit", "extend"])
+def test_video_edit_extend_accepts_grok_backend_override(monkeypatch, video_op):
+    monkeypatch.setenv("VIDEO_BACKEND", "gemini")
+    parsed = ParsedCommand(
+        mode="video",
+        video_op=video_op,
+        video_source_url="https://example.com/source.mp4",
+        backend_override="grok",
+    )
+
+    error = ai_slop_bot._validate_media_references(parsed, None, [])
+
+    assert error is None
+
+
+def test_video_extend_rejects_non_grok_backend(monkeypatch):
+    monkeypatch.setenv("VIDEO_BACKEND", "gemini")
+    parsed = ParsedCommand(
+        mode="video",
+        video_op="extend",
+        video_source_url="https://example.com/source.mp4",
+    )
+
+    error = ai_slop_bot._validate_media_references(parsed, None, [])
+
+    assert error == "Video edit/extend is only supported on the grok backend; use -b grok."
 
 
 @patch("ai_slop_bot.usage.record_usage")

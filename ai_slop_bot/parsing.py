@@ -1,5 +1,6 @@
 """Flag parsing and directive syntax for /ai-slop commands."""
 
+import urllib.parse
 from dataclasses import dataclass, field
 
 import media_refs
@@ -15,6 +16,8 @@ _LONG_FLAGS = {
     "--conversation",
     "--upload",
     "--edit",
+    "--edit-video",
+    "--extend-video",
     "--ref",
     "--start",
     "--credit",
@@ -47,6 +50,8 @@ class ParsedCommand:
     report: bool = False
     gallery: bool = False
     video_duration: int | None = None
+    video_op: str | None = None
+    video_source_url: str | None = None
     pay_amount: float | None = None
     credit_target: str | None = None
     credit_amount: float | None = None
@@ -72,6 +77,8 @@ def parse_command(input_str: str) -> ParsedCommand:
     gallery_mode = False
     backend_override = None
     pay_amount = None
+    video_op = None
+    video_source_url = None
     credit_target = None
     credit_amount = None
     conversation_mode = False
@@ -118,6 +125,20 @@ def parse_command(input_str: str) -> ParsedCommand:
             conversation_mode = True
         elif lower == "--upload":
             upload_requested = True
+        elif lower in ("--edit-video", "--extend-video"):
+            if i + 1 < len(tokens):
+                i += 1
+                url = media_refs.parse_reference_url(tokens[i])
+                parsed_url = urllib.parse.urlparse(url)
+                if parsed_url.scheme in ("http", "https") and parsed_url.netloc:
+                    video_mode = True
+                    video_op = "edit" if lower == "--edit-video" else "extend"
+                    video_source_url = url
+                else:
+                    prompt_tokens.append(token)
+                    prompt_tokens.append(tokens[i])
+            else:
+                prompt_tokens.append(token)
         elif lower in ("--edit", "--ref", "--start"):
             if i + 1 < len(tokens):
                 i += 1
@@ -224,6 +245,8 @@ def parse_command(input_str: str) -> ParsedCommand:
         report=report_mode,
         gallery=gallery_mode,
         video_duration=video_duration,
+        video_op=video_op,
+        video_source_url=video_source_url,
         pay_amount=pay_amount,
         credit_target=credit_target,
         credit_amount=credit_amount,

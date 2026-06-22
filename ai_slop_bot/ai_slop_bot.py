@@ -142,11 +142,15 @@ def ai_slop_bot(event, context):
             print(f"GENERATE VIDEO: {prompt}")
             backend = _backend_for_mode("video", parsed.backend_override)
             provider = providers.get_video_provider(parsed.backend_override)
-            source_image = (
-                media_refs.resolve_reference_image(source_ref)
-                if source_ref else None
-            )
-            references = media_refs.resolve_reference_images(reference_refs)
+            if parsed.video_op:
+                source_image = None
+                references = []
+            else:
+                source_image = (
+                    media_refs.resolve_reference_image(source_ref)
+                    if source_ref else None
+                )
+                references = media_refs.resolve_reference_images(reference_refs)
             result = _provider_call_or_record_failure(
                 user=user,
                 mode="video",
@@ -160,6 +164,8 @@ def ai_slop_bot(event, context):
                     duration=parsed.video_duration,
                     source_image=source_image,
                     references=references,
+                    video_op=parsed.video_op,
+                    video_url=parsed.video_source_url,
                 ),
             )
             usage.record_usage(user, result)
@@ -400,6 +406,14 @@ def _collect_media_references(parsed, payload_references: list[media_refs.Refere
 
 def _validate_media_references(parsed, source_ref, reference_refs) -> str | None:
     """Return a user-facing validation error for unsupported media combinations."""
+    video_op = getattr(parsed, "video_op", None)
+    if video_op:
+        if source_ref or reference_refs:
+            return "--edit-video/--extend-video cannot be combined with --start, --ref, or --edit."
+        backend = parsed.backend_override or os.environ.get("VIDEO_BACKEND", "grok")
+        if backend != "grok":
+            return "Video edit/extend is only supported on the grok backend; use -b grok."
+
     has_references = bool(source_ref or reference_refs)
     if not has_references:
         return None
@@ -651,16 +665,25 @@ def main():
         return
 
     if parsed.mode == "video":
+        source_ref, reference_refs = _collect_media_references(parsed, [])
+        validation_error = _validate_media_references(parsed, source_ref, reference_refs)
+        if validation_error:
+            raise SystemExit(validation_error)
         prompt = prompts.sanitize_prompt(parsed.prompt_text, "cli", parsed.potato_mode)
         provider = providers.get_video_provider(parsed.backend_override)
-        source_ref, reference_refs = _collect_media_references(parsed, [])
-        source_image = media_refs.resolve_reference_image(source_ref) if source_ref else None
-        references = media_refs.resolve_reference_images(reference_refs)
+        if parsed.video_op:
+            source_image = None
+            references = []
+        else:
+            source_image = media_refs.resolve_reference_image(source_ref) if source_ref else None
+            references = media_refs.resolve_reference_images(reference_refs)
         result = provider.generate(
             prompt,
             duration=parsed.video_duration,
             source_image=source_image,
             references=references,
+            video_op=parsed.video_op,
+            video_url=parsed.video_source_url,
         )
         outfile = "/tmp/claude-1000/ai_slop_output.mp4"
         with open(outfile, "wb") as f:

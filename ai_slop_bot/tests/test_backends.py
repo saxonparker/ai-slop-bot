@@ -513,6 +513,96 @@ def test_grok_video_generate(mock_requests):
 
 @patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
 @patch("backends.grok_video.requests")
+def test_grok_video_edit(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-edit"}
+    mock_submit.raise_for_status = MagicMock()
+
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/edit.mp4", "duration": 10},
+        "model": "grok-imagine-video",
+    }
+    mock_status.raise_for_status = MagicMock()
+
+    fake_bytes = b"\x00\x00\x00\x1cftypedit"
+    mock_download = MagicMock(content=fake_bytes)
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, mock_download]
+
+    source_video_url = "https://example.com/source.mp4"
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate(
+            "add cinematic rain",
+            video_op="edit",
+            video_url=source_video_url,
+        )
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "grok"
+
+    post_args = mock_requests.post.call_args
+    assert post_args.args[0].endswith("/videos/edits")
+    assert post_args.kwargs["json"] == {
+        "model": "grok-imagine-video",
+        "prompt": "add cinematic rain",
+        "video": {"url": source_video_url},
+        "duration": 10,
+    }
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_extend(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-extend"}
+    mock_submit.raise_for_status = MagicMock()
+
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/extend.mp4", "duration": 10},
+        "model": "grok-imagine-video",
+    }
+    mock_status.raise_for_status = MagicMock()
+
+    fake_bytes = b"\x00\x00\x00\x1cftypextend"
+    mock_download = MagicMock(content=fake_bytes)
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, mock_download]
+
+    source_video_url = "https://example.com/source.mp4"
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate(
+            "continue the camera move",
+            video_op="extend",
+            video_url=source_video_url,
+        )
+
+    assert isinstance(result, GenerationResult)
+    assert result.content == fake_bytes
+    assert result.backend == "grok"
+
+    post_args = mock_requests.post.call_args
+    assert post_args.args[0].endswith("/videos/extensions")
+    assert post_args.kwargs["json"] == {
+        "model": "grok-imagine-video",
+        "prompt": "continue the camera move",
+        "video": {"url": source_video_url},
+        "duration": 10,
+    }
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
 def test_grok_video_custom_duration(mock_requests):
     from backends.grok_video import GrokProvider
 
@@ -835,3 +925,17 @@ def test_gemini_video_error_raises(mock_client_cls):
     with patch("backends.gemini_video.time.sleep"):
         with pytest.raises(RuntimeError, match="Video generation failed"):
             GeminiProvider().generate("x")
+
+
+def test_gemini_video_rejects_edit_extend_operation():
+    from backends.gemini_video import GeminiProvider
+
+    with pytest.raises(
+        ValueError,
+        match=r"Edit/extend video is only supported on the grok backend; use -b grok\.",
+    ):
+        GeminiProvider().generate(
+            "make it longer",
+            video_op="extend",
+            video_url="https://example.com/source.mp4",
+        )

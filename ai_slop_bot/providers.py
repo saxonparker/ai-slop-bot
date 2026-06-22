@@ -21,9 +21,16 @@ class ImageProvider(Protocol):
 
 class VideoProvider(Protocol):
     """Interface for video generation backends."""
-    def generate(self, prompt: str, duration: int | None = None,
-                 source_image: ResolvedImage | None = None,
-                 references: list[ResolvedImage] | None = None) -> GenerationResult: ...
+    def generate(  # pylint: disable=too-many-arguments
+        self,
+        prompt: str,
+        duration: int | None = None,
+        source_image: ResolvedImage | None = None,
+        references: list[ResolvedImage] | None = None,
+        *,
+        video_op: str | None = None,
+        video_url: str | None = None,
+    ) -> GenerationResult: ...
 
 
 TEXT_PROVIDERS = {
