@@ -19,8 +19,18 @@ SUPPORTED_DURATIONS = (4, 6, 8)
 class GeminiProvider:
     """Video generation using Google Veo (with native audio/dialogue)."""
 
-    def generate(self, prompt: str, duration: int | None = None,
-                 source_image=None, references: list | None = None) -> GenerationResult:
+    def generate(  # pylint: disable=too-many-arguments,unused-argument
+        self,
+        prompt: str,
+        duration: int | None = None,
+        source_image=None,
+        references: list | None = None,
+        *,
+        video_op: str | None = None,
+        video_url: str | None = None,
+    ) -> GenerationResult:
+        if video_op:
+            raise ValueError("Edit/extend video is only supported on the grok backend; use -b grok.")
         if references:
             raise ValueError("Veo reference images are not supported by this backend yet; use -b grok.")
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])

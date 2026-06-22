@@ -41,11 +41,13 @@ HELP_TEXT = """*slop-bot* — AI text, image, and video generation
 *Reference images:*
   `/slop-bot -i --upload` — open a form to upload 1-3 temporary image references
   `/slop-bot -i --edit` — open the same form for an uploaded image edit
-  `/slop-bot -v --upload` — open a form to upload a start frame or loose video references
+  `/slop-bot -v --upload` — open a form to upload a start frame or loose video references, or choose edit/extend
   `/slop-bot -i --edit <image-url> turn this into a watercolor painting`
   `/slop-bot -i --ref <image-url> make something in this style`
   `/slop-bot -v --start <image-url> slow cinematic push in`
   `/slop-bot -v --ref <image-url> --ref <image-url> combine these subjects`
+  `/slop-bot -v --edit-video <video-url> restyle this clip` — edit an existing video (Grok only)
+  `/slop-bot -v --extend-video <video-url> keep the action going` — extend a video from its last frame (Grok only)
   Uploaded reference files are deleted from Slack after the bot downloads them.
 
 *Conversations:*
@@ -77,6 +79,8 @@ _LONG_FLAGS = {
     "--conversation",
     "--upload",
     "--edit",
+    "--edit-video",
+    "--extend-video",
     "--ref",
     "--start",
     "--credit",
@@ -292,6 +296,8 @@ def _parse_upload_command(prompt: str) -> dict:
     mode = "text"
     duration = ""
     backend = ""
+    video_op = "generate"
+    video_url = ""
     prompt_tokens = []
     i = 0
     while i < len(tokens):
@@ -304,6 +310,12 @@ def _parse_upload_command(prompt: str) -> dict:
                 i += 1
             else:
                 mode = "image"
+        elif lower in ("--edit-video", "--extend-video"):
+            mode = "video"
+            video_op = "edit" if lower == "--edit-video" else "extend"
+            if i + 1 < len(tokens) and _looks_like_url(tokens[i + 1]):
+                i += 1
+                video_url = tokens[i]
         elif lower == "-i":
             mode = "image"
         elif lower == "-v":
@@ -323,6 +335,8 @@ def _parse_upload_command(prompt: str) -> dict:
         "mode": mode,
         "duration": duration,
         "backend": backend,
+        "video_op": video_op,
+        "video_url": video_url,
         "prompt": " ".join(prompt_tokens),
     }
 
@@ -359,6 +373,37 @@ def _open_upload_modal(params: dict, upload_options: dict):
         blocks.extend([
             {
                 "type": "input",
+                "block_id": "video_op_block",
+                "label": {"type": "plain_text", "text": "Video operation"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "video_op",
+                    "options": [
+                        _option("Generate", "generate"),
+                        _option("Edit", "edit"),
+                        _option("Extend", "extend"),
+                    ],
+                    "initial_option": _option(
+                        {
+                            "edit": "Edit",
+                            "extend": "Extend",
+                        }.get(upload_options.get("video_op", ""), "Generate"),
+                        upload_options.get("video_op", "generate"),
+                    ),
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "video_url_block",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Source video URL"},
+                "element": _plain_text_input(
+                    "video_url",
+                    initial_value=upload_options.get("video_url", ""),
+                ),
+            },
+            {
+                "type": "input",
                 "block_id": "duration_block",
                 "optional": True,
                 "label": {"type": "plain_text", "text": "Duration"},
@@ -383,7 +428,7 @@ def _open_upload_modal(params: dict, upload_options: dict):
                 },
             },
         ])
-    blocks.append({
+    files_block = {
         "type": "input",
         "block_id": "files_block",
         "label": {"type": "plain_text", "text": "Reference images"},
@@ -393,7 +438,10 @@ def _open_upload_modal(params: dict, upload_options: dict):
             "filetypes": ["jpg", "jpeg", "png", "webp"],
             "max_files": 7 if mode == "video" else 3,
         },
-    })
+    }
+    if mode == "video":
+        files_block["optional"] = True
+    blocks.append(files_block)
 
     payload = {
         "trigger_id": params["trigger_id"],
@@ -461,15 +509,20 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     prompt = (_state_value(state, "prompt_block", "prompt").get("value") or "").strip()
     backend = _selected_value(_state_value(state, "backend_block", "backend"))
     duration = (_state_value(state, "duration_block", "duration").get("value") or "").strip()
+    video_op = _selected_value(_state_value(state, "video_op_block", "video_op"))
+    video_url = (_state_value(state, "video_url_block", "video_url").get("value") or "").strip()
     role = _selected_value(_state_value(state, "reference_role_block", "reference_role"))
     file_ids = _file_ids(_state_value(state, "files_block", "files"))
+    is_video_source_op = mode == "video" and video_op in ("edit", "extend")
 
     errors = {}
     if not prompt:
         errors["prompt_block"] = "Enter a prompt."
-    if not file_ids:
+    if is_video_source_op and not _looks_like_url(video_url):
+        errors["video_url_block"] = "Enter an http or https source video URL."
+    if not file_ids and not is_video_source_op:
         errors["files_block"] = "Upload at least one image."
-    if mode == "video" and role == "start" and len(file_ids) > 1:
+    if mode == "video" and not is_video_source_op and role == "start" and len(file_ids) > 1:
         errors["files_block"] = "Start-frame video accepts exactly one image."
     if duration:
         try:
@@ -484,6 +537,22 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
         command_parts.append(duration)
     if backend:
         command_parts.extend(["-b", backend])
+    if is_video_source_op:
+        command_parts.extend([
+            "--edit-video" if video_op == "edit" else "--extend-video",
+            video_url,
+            prompt,
+        ])
+        return {}, {
+            "response_url": metadata.get("response_url", ""),
+            "channel_id": metadata.get("channel_id", ""),
+            "channel_name": metadata.get("channel_name", ""),
+            "thread_ts": "",
+            "prompt": " ".join(command_parts),
+            "user": metadata.get("user", ""),
+            "source": "slash",
+            "reference_images": [],
+        }
     command_parts.append(prompt)
     reference_role = "edit" if mode == "image" else (role or "start")
     references = [

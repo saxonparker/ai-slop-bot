@@ -276,6 +276,71 @@ def test_reverse_with_emoji_flag():
 
 # ── Reference image flags ───────────────────────────────────────────────────
 
+def test_edit_video_flag_sets_video_operation():
+    result = parsing.parse_command("--edit-video https://example.com/source.mp4 make it rain")
+    assert result.mode == "video"
+    assert result.video_op == "edit"
+    assert result.video_source_url == "https://example.com/source.mp4"
+    assert result.display_text == "make it rain"
+    assert result.prompt_text == "make it rain"
+
+
+def test_extend_video_flag_sets_video_operation():
+    result = parsing.parse_command("--extend-video https://example.com/source.mp4 keep going")
+    assert result.mode == "video"
+    assert result.video_op == "extend"
+    assert result.video_source_url == "https://example.com/source.mp4"
+    assert result.display_text == "keep going"
+    assert result.prompt_text == "keep going"
+
+
+def test_edit_video_slack_escaped_url_is_normalized():
+    result = parsing.parse_command(
+        "--edit-video <https://example.com/source.mp4|source> add lightning"
+    )
+    assert result.mode == "video"
+    assert result.video_op == "edit"
+    assert result.video_source_url == "https://example.com/source.mp4"
+    assert result.prompt_text == "add lightning"
+
+
+def test_extend_video_slack_escaped_url_is_normalized():
+    result = parsing.parse_command(
+        "--extend-video <https://example.com/source.mp4|source> continue forward"
+    )
+    assert result.mode == "video"
+    assert result.video_op == "extend"
+    assert result.video_source_url == "https://example.com/source.mp4"
+    assert result.prompt_text == "continue forward"
+
+
+def test_edit_video_invalid_url_falls_back_to_prompt_text():
+    result = parsing.parse_command("--edit-video not-a-url make it rain")
+    assert result.mode == "text"
+    assert result.video_op is None
+    assert result.video_source_url is None
+    assert result.display_text == "--edit-video not-a-url make it rain"
+    assert result.prompt_text == "--edit-video not-a-url make it rain"
+
+
+def test_edit_video_malformed_http_url_falls_back_to_prompt_text():
+    result = parsing.parse_command("--edit-video https:source.mp4 make it rain")
+    assert result.mode == "text"
+    assert result.video_op is None
+    assert result.video_source_url is None
+    assert result.display_text == "--edit-video https:source.mp4 make it rain"
+    assert result.prompt_text == "--edit-video https:source.mp4 make it rain"
+
+
+def test_extend_video_missing_url_falls_back_to_prompt_text():
+    result = parsing.parse_command("continue the clip --extend-video")
+    assert result.mode == "text"
+    assert result.video_op is None
+    assert result.video_source_url is None
+    assert result.display_text == "continue the clip --extend-video"
+    assert result.prompt_text == "continue the clip --extend-video"
+
+
 def test_image_edit_reference_url():
     result = parsing.parse_command("-i --edit https://example.com/cat.png make it watercolor")
     assert result.mode == "image"
