@@ -76,3 +76,25 @@ def test_upload_to_s3_sets_video_content_type(mock_boto_client):
 
     extra_args = mock_s3.upload_fileobj.call_args.kwargs["ExtraArgs"]
     assert extra_args["ContentType"] == "video/quicktime"
+
+
+@patch("image_upload.boto3.client")
+def test_upload_to_s3_can_use_source_video_prefix_without_manifest(mock_boto_client):
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+
+    url = image_upload.upload_to_s3(
+        "source clip",
+        b"video",
+        extension="mp4",
+        user="alice",
+        channel="general",
+        model="source-video",
+        s3_prefix=image_upload.SOURCE_VIDEO_PREFIX,
+        add_to_manifest=False,
+    )
+
+    assert url.startswith("https://d2jagmvo7k5q5j.cloudfront.net/source-videos/")
+    assert mock_s3.upload_fileobj.call_args.args[2].startswith("source-videos/")
+    mock_s3.get_object.assert_not_called()
+    mock_s3.put_object.assert_not_called()

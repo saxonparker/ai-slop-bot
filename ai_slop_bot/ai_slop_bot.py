@@ -164,6 +164,8 @@ def ai_slop_bot(event, context):
                         user=user,
                         channel=channel_name,
                         model="source-video",
+                        s3_prefix=image_upload.SOURCE_VIDEO_PREFIX,
+                        add_to_manifest=False,
                     )
             else:
                 source_image = (

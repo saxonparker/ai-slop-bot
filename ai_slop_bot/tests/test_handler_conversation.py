@@ -589,6 +589,8 @@ def test_uploaded_source_video_is_uploaded_and_passed_to_provider(
     assert first_upload.args[:2] == ("make it rain", b"source-video")
     assert first_upload.kwargs["extension"] == "mp4"
     assert first_upload.kwargs["model"] == "source-video"
+    assert first_upload.kwargs["s3_prefix"] == ai_slop_bot.image_upload.SOURCE_VIDEO_PREFIX
+    assert first_upload.kwargs["add_to_manifest"] is False
     provider.generate.assert_called_once_with(
         "make it rain",
         duration=12,

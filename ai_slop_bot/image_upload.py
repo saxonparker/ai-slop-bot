@@ -10,6 +10,8 @@ import boto3
 from PIL import Image
 
 BUCKET = "dallepics"
+DEFAULT_PREFIX = "dalle"
+SOURCE_VIDEO_PREFIX = "source-videos"
 MANIFEST_KEY = "dalle/manifest.json"
 CONTENT_TYPES = {
     "jpeg": "image/jpeg",
@@ -39,11 +41,22 @@ def _update_manifest(s3_client, key: str, user: str, channel: str, model: str):
     )
 
 
-def upload_to_s3(prompt: str, file_bytes: bytes, extension: str = "jpeg",
-                 user: str = "", channel: str = "", model: str = "") -> str:
+def upload_to_s3(
+    prompt: str,
+    file_bytes: bytes,
+    extension: str = "jpeg",
+    user: str = "",
+    channel: str = "",
+    model: str = "",
+    s3_prefix: str = DEFAULT_PREFIX,
+    add_to_manifest: bool = True,
+) -> str:
     """Compress (if image) and upload to S3, returning the CloudFront URL."""
     s3_client = boto3.client("s3")
     extension = extension.lower().lstrip(".")
+    prefix = s3_prefix.strip("/")
+    if not prefix:
+        raise ValueError("S3 prefix must not be empty.")
 
     if extension == "jpeg":
         image = Image.open(io.BytesIO(file_bytes))
@@ -58,7 +71,7 @@ def upload_to_s3(prompt: str, file_bytes: bytes, extension: str = "jpeg",
     rand_tag = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
     slug = prompt[:512].replace(" ", "_")
     final_file = f'{slug}_{rand_tag}.{extension}'
-    s3_key = f"dalle/{final_file}"
+    s3_key = f"{prefix}/{final_file}"
     encoded = urllib.parse.quote(final_file)
     print(f"Final file {final_file}, Encoded url: {encoded}")
 
@@ -72,11 +85,11 @@ def upload_to_s3(prompt: str, file_bytes: bytes, extension: str = "jpeg",
                              ExtraArgs={"ContentType": content_type,
                                         "Metadata": metadata})
 
-    if user or channel or model:
+    if add_to_manifest and (user or channel or model):
         try:
             _update_manifest(s3_client, s3_key, user, channel, model)
         except Exception as exc:  # pylint: disable=broad-except
             print(f"MANIFEST WRITE ERROR: {exc}")
 
-    uploaded_url = f"https://d2jagmvo7k5q5j.cloudfront.net/dalle/{encoded}"
+    uploaded_url = f"https://d2jagmvo7k5q5j.cloudfront.net/{prefix}/{encoded}"
     return uploaded_url

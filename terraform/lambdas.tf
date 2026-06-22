@@ -53,7 +53,10 @@ resource "aws_iam_role_policy" "bot_s3" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["s3:PutObject", "s3:GetObject"]
-      Resource = "arn:aws:s3:::dallepics/dalle/*"
+      Resource = [
+        "arn:aws:s3:::dallepics/dalle/*",
+        "arn:aws:s3:::dallepics/source-videos/*",
+      ]
     }]
   })
 }
