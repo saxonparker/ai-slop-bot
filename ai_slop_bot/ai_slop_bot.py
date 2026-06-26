@@ -372,9 +372,11 @@ def _post_single_shot_text_response(*, source, response_url, channel_id, thread_
     elif thread_ts:
         slack.post_text_response_in_thread(
             response_url, user, display, response, thread_ts,
+            render_in_block=True,
         )
     else:
-        slack.post_text_response(response_url, user, display, response)
+        slack.post_text_response(response_url, user, display, response,
+                                 render_in_block=True)
 
 
 def _provider_call_or_record_failure(*, user: str, mode: str, backend: str,

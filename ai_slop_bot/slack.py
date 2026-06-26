@@ -6,31 +6,14 @@ import os
 import requests
 
 
-def post_text_response(response_url: str, user: str, display: str, response: str):
-    """Post a text response back to Slack."""
-    requests.post(
-        response_url,
-        data=json.dumps({
-            "response_type": "in_channel",
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f'{user} asked slop-bot: "{display}":',
-                    },
-                },
-            ],
-            "attachments": [{"text": response}],
-        }),
-        timeout=10000,
-    )
+def post_text_response(response_url: str, user: str, display: str, response: str,
+                       render_in_block: bool = False):
+    """Post a text response back to Slack.
 
-
-def post_text_response_in_thread(response_url: str, user: str, display: str,
-                                 response: str, thread_ts: str,
-                                 footer_blocks: list | None = None):
-    """Post a text response into a Slack thread via response_url."""
+    When render_in_block is set, the response goes in an mrkdwn section block
+    (so emoji shortcodes render) instead of a legacy attachment, whose text is
+    not parsed as mrkdwn.
+    """
     blocks = [
         {
             "type": "section",
@@ -40,16 +23,60 @@ def post_text_response_in_thread(response_url: str, user: str, display: str,
             },
         },
     ]
-    if footer_blocks:
-        blocks.extend(footer_blocks)
+    payload = {
+        "response_type": "in_channel",
+        "blocks": blocks,
+    }
+    if render_in_block:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": response},
+        })
+    else:
+        payload["attachments"] = [{"text": response}]
     requests.post(
         response_url,
-        data=json.dumps({
-            "response_type": "in_channel",
-            "thread_ts": thread_ts,
-            "blocks": blocks,
-            "attachments": [{"text": response}],
-        }),
+        data=json.dumps(payload),
+        timeout=10000,
+    )
+
+
+def post_text_response_in_thread(response_url: str, user: str, display: str,
+                                 response: str, thread_ts: str,
+                                 footer_blocks: list | None = None,
+                                 render_in_block: bool = False):
+    """Post a text response into a Slack thread via response_url.
+
+    When render_in_block is set, the response goes in an mrkdwn section block
+    (so emoji shortcodes render) instead of a legacy attachment, whose text is
+    not parsed as mrkdwn.
+    """
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f'{user} asked slop-bot: "{display}":',
+            },
+        },
+    ]
+    if render_in_block:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": response},
+        })
+    if footer_blocks:
+        blocks.extend(footer_blocks)
+    payload = {
+        "response_type": "in_channel",
+        "thread_ts": thread_ts,
+        "blocks": blocks,
+    }
+    if not render_in_block:
+        payload["attachments"] = [{"text": response}]
+    requests.post(
+        response_url,
+        data=json.dumps(payload),
         timeout=10000,
     )
 
