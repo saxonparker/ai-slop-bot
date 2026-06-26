@@ -1,7 +1,7 @@
 """Dispatch Lambda for /slop-bot. Receives Slack webhook and publishes to SNS.
 
 Two routes are served from the same Lambda:
-  POST /ai-slop       — slash command (form-encoded body)
+  POST /ai-slop       — HTTP route for Slack slash-command payloads
   POST /slack/events  — Events API (JSON body); we only act on app_mention
                         events inside a thread, treating them as continuation
                         turns of an existing tracked conversation. Top-level
@@ -19,47 +19,55 @@ import urllib.request
 import boto3
 
 
-HELP_TEXT = """*slop-bot* — AI text, image, and video generation
+CANONICAL_SLASH_COMMAND = "/slop-bot"
+HTTP_SLASH_ROUTE = "/ai-slop"
+
+
+HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
 
 *Usage:*
-  `/slop-bot <prompt>` — text response
-  `/slop-bot -i <prompt>` — image generation
-  `/slop-bot -v [seconds] <prompt>` — video generation (Grok: default 10s, max 15s; Veo: 4/6/8s)
-  `/slop-bot -e <prompt>` — emoji-only response
-  `/slop-bot -p <prompt>` — potato mode (sarcastic & rude)
-  `/slop-bot -c <prompt>` — start a conversation; reply with `@slop-bot <prompt>` in the thread to continue
-  `/slop-bot -b <backend> <prompt>` — use a specific backend
-  `/slop-bot -u` — show your usage stats and balance
-  `/slop-bot -g` — link to the image gallery
-  `/slop-bot -pay <amount>` — add credits and get a Venmo payment link
+  `{CANONICAL_SLASH_COMMAND} <prompt>` — text response
+  `{CANONICAL_SLASH_COMMAND} -i <prompt>` — image generation
+  `{CANONICAL_SLASH_COMMAND} -v [seconds] <prompt>` — video generation
+    Grok: default 10s, max 15s; Grok reference-to-video: max 10s; Veo: 4/6/8s, snaps to nearest
+  `{CANONICAL_SLASH_COMMAND} -e <prompt>` — emoji-only text response
+  `{CANONICAL_SLASH_COMMAND} -p <prompt>` — potato mode (sarcastic & rude)
+  `{CANONICAL_SLASH_COMMAND} -c <prompt>` or `{CANONICAL_SLASH_COMMAND} --conversation <prompt>` — start a text-only conversation in a Slack thread
+  `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
+  `{CANONICAL_SLASH_COMMAND} -u` or `{CANONICAL_SLASH_COMMAND} --usage` — show your usage stats and credit balance
+  `{CANONICAL_SLASH_COMMAND} -g` or `{CANONICAL_SLASH_COMMAND} --gallery` — show the AI Slop Gallery link
+  `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — add credits and receive a Venmo payment link
+  `{CANONICAL_SLASH_COMMAND} --report` (`-report` also works) — admin-only balance report; requires `ADMIN_USERS`
+  `{CANONICAL_SLASH_COMMAND} --credit <user> <amount>` (`-credit` also works) — admin-only credit adjustment; requires `ADMIN_USERS`
 
 *Flags can be combined:*
-  `/slop-bot -p -i a beautiful sunset` — potato mode image
-  `/slop-bot -i -b openai a cat` — image with DALL-E
-  `/slop-bot -v -b gemini a corgi surfing` — video with Veo (native audio/dialogue)
+  `{CANONICAL_SLASH_COMMAND} -p -i a beautiful sunset` — potato mode image
+  `{CANONICAL_SLASH_COMMAND} -i -b openai a cat` — image with DALL-E
+  `{CANONICAL_SLASH_COMMAND} -v -b gemini a corgi surfing` — video with Veo (native audio/dialogue)
 
-*Reference images:*
-  `/slop-bot -i --upload` — open a form to upload 1-3 temporary image references
-  `/slop-bot -i --edit` — open the same form for an uploaded image edit
-  `/slop-bot -v --upload` — open a form to upload a start frame, loose image references, or a source video for edit/extend
-  `/slop-bot -i --edit <image-url> turn this into a watercolor painting`
-  `/slop-bot -i --ref <image-url> make something in this style`
-  `/slop-bot -v --start <image-url> slow cinematic push in`
-  `/slop-bot -v --ref <image-url> --ref <image-url> combine these subjects`
-  `/slop-bot -v --edit-video <video-url> restyle this clip` — edit an existing video (Grok only)
-  `/slop-bot -v --extend-video <video-url> keep the action going` — extend a video from its last frame (Grok only)
+*Reference images and videos:*
+  `{CANONICAL_SLASH_COMMAND} -i --upload` — open an image prompt form with 1-3 uploaded references
+  `{CANONICAL_SLASH_COMMAND} -i --edit` — open the same form for an uploaded image edit
+  `{CANONICAL_SLASH_COMMAND} -i --edit make this watercolor` — open the form with the prompt pre-filled
+  `{CANONICAL_SLASH_COMMAND} -i --edit <image-url> turn this into a watercolor painting` — edit an image from a URL
+  `{CANONICAL_SLASH_COMMAND} -i --ref <image-url> make something in this style` — add an image reference; repeat for multiple references
+  `{CANONICAL_SLASH_COMMAND} -v --upload` — open a video prompt form for a start frame, loose references, or a source video
+  `{CANONICAL_SLASH_COMMAND} -v --start <image-url> slow cinematic push in` — use an image URL as the start frame
+  `{CANONICAL_SLASH_COMMAND} -v --ref <image-url> --ref <image-url> combine these subjects` — add image references
+  `{CANONICAL_SLASH_COMMAND} -v --edit-video <video-url> restyle this clip` — edit an existing video (Grok only)
+  `{CANONICAL_SLASH_COMMAND} -v --extend-video <video-url> keep the action going` — extend a video from its last frame (Grok only)
   Uploaded reference/source files are deleted from Slack after the bot downloads them.
 
 *Conversations:*
-  `/slop-bot -c <prompt>` starts a multi-turn text conversation rooted in a
+  `{CANONICAL_SLASH_COMMAND} -c <prompt>` starts a multi-turn text conversation rooted in a
   Slack thread. Continue it by `@`-mentioning the bot in the thread:
   `@slop-bot <prompt>`. Slack does not allow slash commands inside threads,
   so use mentions for follow-ups. Conversations are text-only (`-c` cannot
   combine with `-i` or `-v`) and are capped at ~200 KB of transcript.
 
 *Hidden directives:*
-  `/slop-bot tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
-  `/slop-bot what's the capital of France? ]asking for a friend[` — text in reverse `]brackets[` is shown in the channel but not sent to the AI
+  `{CANONICAL_SLASH_COMMAND} tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
+  `{CANONICAL_SLASH_COMMAND} what's the capital of France? ]asking for a friend[` — text in reverse `]brackets[` is shown in the channel but not sent to the AI
 
 *Backends:*
   Text: `gemini` (default), `anthropic`, `openai`, `grok`
@@ -119,7 +127,7 @@ def dispatch(event, _):
 
 
 def _handle_slash_command(event):
-    """Form-encoded slash command from /ai-slop. Publishes to SNS, acks fast."""
+    """Slack slash-command payload posted to the /ai-slop route."""
     body = _decode_body(event)
     params = dict(urllib.parse.parse_qsl(body))
     print(params)

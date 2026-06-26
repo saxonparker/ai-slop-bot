@@ -1,4 +1,4 @@
-"""Flag parsing and directive syntax for /ai-slop commands."""
+"""Flag parsing and directive syntax for /slop-bot commands."""
 
 import urllib.parse
 from dataclasses import dataclass, field
@@ -39,7 +39,7 @@ def _normalize_flag_token(token: str) -> str:
 
 @dataclass
 class ParsedCommand:
-    """Result of parsing an /ai-slop command string."""
+    """Result of parsing a /slop-bot command string."""
     mode: str  # "text", "image", or "video"
     display_text: str = ""
     prompt_text: str = ""

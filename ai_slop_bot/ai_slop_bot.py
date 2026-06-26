@@ -18,6 +18,9 @@ import slack
 import usage
 
 
+CANONICAL_SLASH_COMMAND = "/slop-bot"
+
+
 def ai_slop_bot(event, context):
     """Entry point for the Lambda that generates text or images."""
     response_url = None
@@ -567,7 +570,7 @@ def _handle_continuation_turn(*, parsed, user, response_url, thread_ts, existing
                 or conv.turn_count >= conversations.MAX_TURNS):
             _continuation_error(
                 "This conversation has reached its limit. "
-                "Start a new one with `/slop-bot -c <prompt>`.",
+                f"Start a new one with `{CANONICAL_SLASH_COMMAND} -c <prompt>`.",
                 source=source, response_url=response_url,
                 channel_id=channel_id, thread_ts=thread_ts,
             )
