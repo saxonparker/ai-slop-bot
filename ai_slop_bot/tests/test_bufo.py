@@ -25,53 +25,44 @@ def _reset_cache(monkeypatch):
     monkeypatch.setattr(bufo, "_BUFO_EMOJI_NAMES", None)
 
 
-def test_normalize_names_dedupes_and_rejects_non_bufo_names():
+def test_normalize_names_lowercases_dedupes_and_drops_invalid():
     names = bufo._normalize_names([  # pylint: disable=protected-access
         ":Bufo-Party:",
         "bufo-party.png",
         "Awesomebufo.gif",
-        "bufopedia",
-        "wrong-frog.png",
-        "frog-party",
-        "BUFO_party",
+        "bigbufo_0_0.png",
+        "all-the-bufo/bufo-sad.png",
+        "señor-bufo.png",
+        "bufo+1.png",
+        "bufo's-father.png",
     ])
 
-    assert names == ["bufo-party", "awesomebufo", "bufo_party"]
+    # Hyphens and underscores are preserved verbatim; names with characters
+    # Slack emoji cannot contain are dropped.
+    assert names == ["bufo-party", "awesomebufo", "bigbufo_0_0", "bufo-sad"]
 
 
-def test_fetch_reads_bufopedia_shell_and_bundled_catalog(monkeypatch):
-    root = b"""
-        <!doctype html>
-        <script type="module" crossorigin src="/assets/index-test.js"></script>
-        <link rel="icon" href="/bufo-excited.png">
-    """
-    catalog = (
-        '[{"id":"awesomebufo","fileName":"Awesomebufo.png","displayName":"Awesomebufo",'
-        '"imageUrl":"https://cdn/Awesomebufo.png"},'
-        '{"id":"party-bufo","fileName":"party-bufo.gif","displayName":"Party bufo",'
-        '"imageUrl":"https://cdn/party-bufo.gif"},'
-        '{"id":"se-or-bufo","fileName":"se%C3%B1or-bufo.png","displayName":"Senor bufo",'
-        '"imageUrl":"https://cdn/se%C3%B1or-bufo.png"},'
-        '{"id":"wrong-frog","fileName":"wrong-frog.png","displayName":"Wrong frog",'
-        '"imageUrl":"https://cdn/wrong-frog.png"}]'
-    )
-    bundle = f"const ic=JSON.parse(`{catalog}`);".encode("utf-8")
+def test_fetch_parses_all_the_bufo_index(monkeypatch):
+    index = (
+        "| name | image |\n"
+        "| - | - |\n"
+        "| bufo-party.png | ![bufo-party.png](all-the-bufo/bufo-party.png) |\n"
+        "| bigbufo_0_0.png | ![bigbufo_0_0.png](all-the-bufo/bigbufo_0_0.png) |\n"
+        "| Awesomebufo.gif | ![Awesomebufo.gif](all-the-bufo/Awesomebufo.gif) |\n"
+        "| señor-bufo.png | ![señor-bufo.png](all-the-bufo/señor-bufo.png) |\n"
+    ).encode("utf-8")
 
     def fake_urlopen(request, timeout):  # pylint: disable=unused-argument
         url = getattr(request, "full_url", request)
-        if url == bufo.BUFO_CATALOG_URL:
-            return _FakeResponse(root)
-        if url == "https://bufopedia.com/assets/index-test.js":
-            return _FakeResponse(bundle)
-        raise AssertionError(f"unexpected URL: {url}")
+        assert url == bufo.BUFO_CATALOG_URL
+        return _FakeResponse(index)
 
     monkeypatch.setattr(bufo.urllib.request, "urlopen", fake_urlopen)
 
     assert bufo._fetch_bufo_emoji_names() == [  # pylint: disable=protected-access
-        "bufo-excited",
+        "bufo-party",
+        "bigbufo_0_0",
         "awesomebufo",
-        "party_bufo",
-        "se_or_bufo",
     ]
 
 
