@@ -31,6 +31,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -v [seconds] <prompt>` — video generation
     Grok: default 10s, max 15s; Grok reference-to-video: max 10s; Veo: 4/6/8s, snaps to nearest
   `{CANONICAL_SLASH_COMMAND} -e <prompt>` — emoji-only text response
+  `{CANONICAL_SLASH_COMMAND} -bufo <prompt>` or `{CANONICAL_SLASH_COMMAND} --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewrite using names from bufopedia.com
   `{CANONICAL_SLASH_COMMAND} -p <prompt>` — potato mode (sarcastic & rude)
   `{CANONICAL_SLASH_COMMAND} -c <prompt>` or `{CANONICAL_SLASH_COMMAND} --conversation <prompt>` — start a text-only conversation in a Slack thread
   `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
@@ -56,6 +57,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -v --ref <image-url> --ref <image-url> combine these subjects` — add image references
   `{CANONICAL_SLASH_COMMAND} -v --edit-video <video-url> restyle this clip` — edit an existing video (Grok only)
   `{CANONICAL_SLASH_COMMAND} -v --extend-video <video-url> keep the action going` — extend a video from its last frame (Grok only)
+  Video edit/extend source files are mutually exclusive with reference images.
   Uploaded reference/source files are deleted from Slack after the bot downloads them.
 
 *Conversations:*
@@ -92,6 +94,7 @@ _LONG_FLAGS = {
     "--ref",
     "--start",
     "--credit",
+    "--bufo",
 }
 
 

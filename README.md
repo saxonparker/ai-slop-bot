@@ -11,6 +11,7 @@ slash-command payloads to the `/ai-slop` HTTP route during deployment.
 - `/slop-bot -i <prompt>` — image generation (default: Grok)
 - `/slop-bot -v [seconds] <prompt>` — video generation (default: Grok)
 - `/slop-bot -e <prompt>` — emoji-only text response
+- `/slop-bot -bufo <prompt>` or `/slop-bot --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com
 - `/slop-bot -p <prompt>` — potato mode
 - `/slop-bot -c <prompt>` or `/slop-bot --conversation <prompt>` — start a multi-turn text conversation in a thread
 - `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
@@ -29,6 +30,7 @@ Flags can appear in any order unless a flag consumes the next value.
 - `-i` — image generation.
 - `-v [seconds]` — video generation. Grok defaults to 10 seconds and supports up to 15 seconds; Grok reference-to-video supports up to 10 seconds. Veo (`-b gemini`) supports 4, 6, or 8 seconds and snaps other requested durations to the nearest supported value.
 - `-e` — emoji-only response.
+- `-bufo`, `--bufo` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com.
 - `-p` — potato mode.
 - `-c`, `--conversation` — start a text-only conversation in a Slack thread.
 - `-b <backend>` — override the backend for the selected mode.
@@ -291,7 +293,7 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
    - **Slash command** Request URL: `<base_url>/ai-slop`
      - Usage Hint:
        ```text
-       /slop-bot <prompt> | -i | -v [sec] | -c/--conversation | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -p | -u | -pay <amt>
+       /slop-bot <prompt> | -i | -v [sec] | -c/--conversation | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -bufo/--bufo | -p | -u | -pay <amt>
        ```
    - **Interactivity & Shortcuts** → Enable Interactivity
      - Request URL: `<base_url>/slack/interactions`

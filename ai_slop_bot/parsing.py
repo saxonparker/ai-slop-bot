@@ -21,6 +21,7 @@ _LONG_FLAGS = {
     "--ref",
     "--start",
     "--credit",
+    "--bufo",
 }
 
 
@@ -45,6 +46,7 @@ class ParsedCommand:
     prompt_text: str = ""
     emoji_mode: bool = False
     potato_mode: bool = False
+    bufo_mode: bool = False
     backend_override: str | None = None
     usage: bool = False
     report: bool = False
@@ -72,6 +74,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     video_duration = None
     emoji_mode = False
     potato_mode = False
+    bufo_mode = False
     usage_mode = False
     report_mode = False
     gallery_mode = False
@@ -103,6 +106,8 @@ def parse_command(input_str: str) -> ParsedCommand:
             emoji_mode = True
         elif lower == "-p":
             potato_mode = True
+        elif lower in ("-bufo", "--bufo"):
+            bufo_mode = True
         elif lower in ("-u", "--usage"):
             usage_mode = True
         elif lower in ("-report", "--report"):
@@ -240,6 +245,7 @@ def parse_command(input_str: str) -> ParsedCommand:
         prompt_text=prompt_text,
         emoji_mode=emoji_mode,
         potato_mode=potato_mode,
+        bufo_mode=bufo_mode,
         backend_override=backend_override,
         usage=usage_mode,
         report=report_mode,

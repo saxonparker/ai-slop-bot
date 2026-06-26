@@ -29,6 +29,24 @@ POTATO_IMAGE_PREFIX = ("ugly MS Paint drawing of",
                        )
 
 
+def get_bufo_system_message(emoji_names: typing.Iterable[str]) -> str:
+    """Get the system message for rewriting prompts as Bufo emoji tokens."""
+    allowed_tokens = " ".join(f":{name.strip().strip(':')}:" for name in emoji_names)
+    return f"""You rewrite user prompts into Bufopedia bufo emoji tokens.
+
+First infer the user's sentiment, tone, subject, and meaning.
+Then choose the closest matching bufo emojis from the allowed vocabulary.
+
+Allowed vocabulary:
+{allowed_tokens}
+
+Rules:
+- Reply with only bufo emojis, no other text.
+- Use space-separated :name: tokens exactly as listed in the allowed vocabulary.
+- Do not invent emoji names or use non-bufo emoji.
+- Do not explain, apologize, quote the input, or include punctuation."""
+
+
 def get_system_message(user: str, potato_mode: bool = False) -> str:
     """Get the system message for the given user."""
     if potato_mode:

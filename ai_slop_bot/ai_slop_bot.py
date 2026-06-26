@@ -8,6 +8,7 @@ import time
 import traceback
 
 import budget
+import bufo
 import conversations
 import image_upload
 import media_refs
@@ -58,6 +59,11 @@ def ai_slop_bot(event, context):
                 video_op=payload_source_video.role,
                 video_source_url=None,
             )
+        bufo_error = _validate_bufo_mode(parsed)
+        if bufo_error:
+            _notify(bufo_error, source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
+            return
         source_ref, reference_refs = _collect_media_references(parsed, payload_references)
         validation_error = _validate_media_references(parsed, source_ref, reference_refs)
         if validation_error:
@@ -253,6 +259,34 @@ def ai_slop_bot(event, context):
                   f"{channel_id}:{thread_ts}, ignoring silently")
             return
 
+        if parsed.bufo_mode:
+            names = bufo.get_bufo_emoji_names()
+            system = prompts.get_bufo_system_message(names)
+            print(f"GENERATE BUFO TEXT: {parsed.prompt_text}")
+            backend = _backend_for_mode("text", parsed.backend_override)
+            provider = providers.get_text_provider(parsed.backend_override)
+            result = _provider_call_or_record_failure(
+                user=user,
+                mode="text",
+                backend=backend,
+                model=_model_for_request("text", backend),
+                cost_estimate=0.0,
+                call=lambda: provider.generate(system, parsed.prompt_text),
+            )
+            usage.record_usage(user, result)
+            response = bufo.sanitize_bufo_output(result.content, set(names))
+            print(f"GENERATE BUFO TEXT COMPLETE: {response}")
+            _post_single_shot_text_response(
+                source=source,
+                response_url=response_url,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                user=user,
+                display=parsed.display_text,
+                response=response,
+            )
+            return
+
         if existing_conv is not None or parsed.conversation:
             request_id = getattr(context, "aws_request_id", None) or "local"
             _handle_conversation_turn(
@@ -322,6 +356,25 @@ def _blocks_to_text(blocks: list) -> str:
         if text:
             parts.append(text)
     return "\n".join(parts)
+
+
+def _post_single_shot_text_response(*, source, response_url, channel_id, thread_ts,
+                                    user, display, response):
+    """Post a one-off text response, preserving Slack thread context."""
+    if source == "event_mention":
+        slack.post_text_chat_postmessage(
+            channel_id=channel_id,
+            user=user,
+            display=display,
+            response=response,
+            thread_ts=thread_ts,
+        )
+    elif thread_ts:
+        slack.post_text_response_in_thread(
+            response_url, user, display, response, thread_ts,
+        )
+    else:
+        slack.post_text_response(response_url, user, display, response)
 
 
 def _provider_call_or_record_failure(*, user: str, mode: str, backend: str,
@@ -428,6 +481,28 @@ def _collect_media_references(parsed, payload_references: list[media_refs.Refere
         else:
             references.extend(extra_starts)
     return source_ref, references
+
+
+def _validate_bufo_mode(parsed) -> str | None:
+    """Return a user-facing error when bufo mode is combined with non-text modes."""
+    if not parsed.bufo_mode:
+        return None
+
+    conflicts = []
+    if parsed.conversation:
+        conflicts.append("-c")
+    if parsed.mode == "image":
+        conflicts.append("-i")
+    elif parsed.mode == "video":
+        conflicts.append("-v")
+
+    if not conflicts:
+        return None
+
+    return (
+        f"-bufo cannot be combined with {', '.join(conflicts)}: "
+        "bufo mode is single-shot text-only."
+    )
 
 
 def _validate_media_references(parsed, source_ref, reference_refs) -> str | None:
@@ -677,9 +752,10 @@ def main():
     """Process the command given on the command line."""
     input_str = " ".join(sys.argv[1:])
     parsed = parsing.parse_command(input_str)
-    print(f"Mode: {parsed.mode}")
-    print(f"Display: {parsed.display_text}")
-    print(f"Prompt: {parsed.prompt_text}")
+    if not parsed.bufo_mode:
+        print(f"Mode: {parsed.mode}")
+        print(f"Display: {parsed.display_text}")
+        print(f"Prompt: {parsed.prompt_text}")
 
     if parsed.usage:
         summary = usage.get_usage_summary("cli")
@@ -688,6 +764,18 @@ def main():
                 print(block["text"]["text"])
         else:
             print(summary)
+        return
+
+    bufo_error = _validate_bufo_mode(parsed)
+    if bufo_error:
+        raise SystemExit(bufo_error)
+
+    if parsed.bufo_mode:
+        names = bufo.get_bufo_emoji_names()
+        system = prompts.get_bufo_system_message(names)
+        provider = providers.get_text_provider(parsed.backend_override)
+        result = provider.generate(system, parsed.prompt_text)
+        print(bufo.sanitize_bufo_output(result.content, set(names)))
         return
 
     if parsed.mode == "video":

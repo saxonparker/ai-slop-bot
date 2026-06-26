@@ -7,6 +7,14 @@ sys.path.append(".")
 import prompts
 
 
+def test_get_bufo_system_message_restricts_output_to_vocabulary():
+    msg = prompts.get_bufo_system_message(["bufo-party", "bufo-sad"])
+    assert ":bufo-party:" in msg
+    assert "sentiment" in msg
+    assert "meaning" in msg
+    assert "only bufo emojis, no other text" in msg.lower()
+
+
 def test_system_message_default():
     msg = prompts.get_system_message("someuser")
     assert "helpful assistant" in msg

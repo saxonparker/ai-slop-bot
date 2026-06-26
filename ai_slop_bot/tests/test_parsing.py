@@ -103,6 +103,31 @@ def test_potato_image_mode():
     assert result.display_text == "a beautiful sunset"
 
 
+def test_bufo_short_flag():
+    result = parsing.parse_command("-bufo hello world")
+    assert result.bufo_mode is True
+    assert result.mode == "text"
+    assert result.display_text == "hello world"
+    assert result.prompt_text == "hello world"
+
+
+def test_bufo_long_flag():
+    result = parsing.parse_command("--bufo hello world")
+    assert result.bufo_mode is True
+    assert result.mode == "text"
+    assert result.display_text == "hello world"
+    assert result.prompt_text == "hello world"
+
+
+def test_bufo_long_flag_accepts_smart_dash():
+    for dash in ("\u2013", "\u2014", "\u2212"):
+        result = parsing.parse_command(f"{dash}bufo hello world")
+        assert result.bufo_mode is True
+        assert result.mode == "text"
+        assert result.display_text == "hello world"
+        assert result.prompt_text == "hello world"
+
+
 def test_video_mode():
     result = parsing.parse_command("-v a dancing cat")
     assert result.mode == "video"
