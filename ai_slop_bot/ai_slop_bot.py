@@ -333,7 +333,7 @@ def _describe_error_for_user(exc: Exception) -> str:
     message = getattr(exc, "user_message", None) or str(exc)
     cost_actual = getattr(exc, "cost_actual", None)
     if cost_actual:
-        message += f" (this still cost ${cost_actual:.2f})"
+        message += f" Cost: ${cost_actual:.2f}"
     return message
 
 

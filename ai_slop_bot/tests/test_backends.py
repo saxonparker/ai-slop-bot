@@ -247,7 +247,7 @@ def test_gemini_image_prompt_blocked_before_generation(mock_client_cls):
         GeminiProvider().generate("something blocked")
 
     assert exc_info.value.error_type == "moderation"
-    assert "safety filters" in exc_info.value.user_message
+    assert "flagged by content moderation" in exc_info.value.user_message
 
 
 @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})

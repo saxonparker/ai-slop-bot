@@ -110,8 +110,8 @@ class GeminiProvider:
                     model=model,
                     error_type="moderation",
                     user_message=(
-                        "Veo declined to generate this video — flagged by content safety "
-                        "filtering: " + "; ".join(filtered_reasons) + ". Try rephrasing."
+                        "Veo denied this video request — flagged by content moderation: "
+                        + "; ".join(filtered_reasons)
                     ),
                     cost_estimate=cost,
                 )

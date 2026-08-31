@@ -154,10 +154,7 @@ def classify_xai_error(exc: Exception, backend_label: str = "Grok") -> tuple[str
             "— this is usually transient, try again."
         )
     if "content moderat" in lower or "moderated" in lower or "safety" in lower or "policy" in lower:
-        return "moderation", (
-            f"{backend_label} declined to generate this — it was flagged by content "
-            "moderation. Try rephrasing your prompt."
-        )
+        return "moderation", f"{backend_label} denied this request — flagged by content moderation."
     if "timeout" in lower or "timed out" in lower:
         return "timeout", f"{backend_label} timed out. Try again."
     if status in (400, 422) or "invalid" in lower:
@@ -189,8 +186,7 @@ def classify_xai_video_failure(data: dict, backend_label: str = "Grok") -> tuple
     if code == "invalid_argument":
         if "moderat" in lower:
             return "moderation", (
-                f"{backend_label} declined to generate this video — flagged by content "
-                "moderation. Try rephrasing your prompt."
+                f"{backend_label} denied this video request — flagged by content moderation."
             )
         return "invalid_request", (
             f"{backend_label} rejected the video request as malformed: {message[:200]}"

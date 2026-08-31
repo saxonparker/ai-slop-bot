@@ -71,10 +71,7 @@ class GeminiProvider:
                     backend="gemini",
                     model=model,
                     error_type="moderation",
-                    user_message=(
-                        "Gemini declined to generate this — the prompt was flagged by "
-                        "its safety filters before generation even started. Try rephrasing."
-                    ),
+                    user_message="Gemini denied this request — flagged by content moderation.",
                     cost_estimate=COST_PER_IMAGE["gemini"],
                 )
             raise ProviderGenerationError(
@@ -118,10 +115,9 @@ class GeminiProvider:
                 model=model,
                 error_type="moderation",
                 user_message=(
-                    "Gemini declined to generate this image "
+                    "Gemini denied this request — flagged by content moderation "
                     f"({finish_name.replace('_', ' ').lower()})."
                     + (f" It said: {text_response}" if text_parts else "")
-                    + " Try rephrasing."
                 ),
                 cost_estimate=COST_PER_IMAGE["gemini"],
             )

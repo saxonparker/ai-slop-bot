@@ -762,7 +762,7 @@ def test_describe_error_appends_billed_cost():
         cost_actual=0.05,
     )
     assert ai_slop_bot._describe_error_for_user(exc) == (
-        "Grok declined to generate this. (this still cost $0.05)"
+        "Grok declined to generate this. Cost: $0.05"
     )
 
 
