@@ -9,6 +9,7 @@ from usage import (
     GenerationResult,
     ProviderGenerationError,
     COST_PER_IMAGE,
+    classify_xai_error,
     xai_cost_from_error,
     xai_cost_from_usage,
 )
@@ -44,11 +45,13 @@ class GrokProvider:
             )
         except Exception as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
+            error_type, user_message = classify_xai_error(exc)
             raise ProviderGenerationError(
                 str(exc),
                 backend="grok",
                 model=model,
-                error_type=_classify_error(exc),
+                error_type=error_type,
+                user_message=user_message,
                 cost_estimate=COST_PER_IMAGE["grok"],
                 cost_actual=cost_actual,
                 cost_in_usd_ticks=cost_ticks,
@@ -103,22 +106,26 @@ class GrokProvider:
                 timeout=timeout,
             )
         except requests.Timeout as exc:
+            message = f"Grok image edit timed out after {timeout} seconds. Please retry."
             raise ProviderGenerationError(
-                f"Grok image edit timed out after {timeout} seconds. Please retry.",
+                message,
                 backend="grok",
                 model=model,
                 error_type="timeout",
+                user_message=message,
                 cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
             ) from exc
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
+            error_type, user_message = classify_xai_error(exc)
             raise ProviderGenerationError(
                 str(exc),
                 backend="grok",
                 model=model,
-                error_type=_classify_error(exc),
+                error_type=error_type,
+                user_message=user_message,
                 cost_estimate=COST_PER_IMAGE["grok"] * (1 + len(references)),
                 cost_actual=cost_actual,
                 cost_in_usd_ticks=cost_ticks,
@@ -142,12 +149,3 @@ class GrokProvider:
             cost_actual=cost_actual,
             cost_in_usd_ticks=cost_ticks,
         )
-
-
-def _classify_error(exc: Exception) -> str:
-    text = str(exc).lower()
-    if "moderation" in text or "safety" in text or "policy" in text:
-        return "moderation"
-    if "timeout" in text or "timed out" in text:
-        return "timeout"
-    return "provider_error"

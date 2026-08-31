@@ -318,9 +318,23 @@ def ai_slop_bot(event, context):
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
         traceback.print_exc()
-        _post_error_safe(str(exc), source=source, response_url=response_url,
+        _post_error_safe(_describe_error_for_user(exc), source=source, response_url=response_url,
                          channel_id=channel_id, thread_ts=thread_ts)
     # pylint: enable=broad-except
+
+
+def _describe_error_for_user(exc: Exception) -> str:
+    """Human-readable error text for Slack, falling back to the raw message.
+
+    Providers that classify their own failures (Grok, Gemini) set
+    `user_message` on ProviderGenerationError; other exceptions fall back to
+    their raw text, same as before.
+    """
+    message = getattr(exc, "user_message", None) or str(exc)
+    cost_actual = getattr(exc, "cost_actual", None)
+    if cost_actual:
+        message += f" (this still cost ${cost_actual:.2f})"
+    return message
 
 
 def _notify(text, *, source, response_url, channel_id, thread_ts):

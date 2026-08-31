@@ -232,6 +232,66 @@ def test_gemini_image_no_image_raises(mock_client_cls):
 
 @patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
 @patch("backends.gemini_image.genai.Client")
+def test_gemini_image_prompt_blocked_before_generation(mock_client_cls):
+    from backends.gemini_image import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_block_reason = MagicMock()
+    mock_block_reason.name = "SAFETY"
+    mock_response = MagicMock(candidates=[])
+    mock_response.prompt_feedback.block_reason = mock_block_reason
+    mock_client.models.generate_content.return_value = mock_response
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GeminiProvider().generate("something blocked")
+
+    assert exc_info.value.error_type == "moderation"
+    assert "safety filters" in exc_info.value.user_message
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_image.genai.Client")
+def test_gemini_image_safety_finish_reason_is_moderation(mock_client_cls):
+    from backends.gemini_image import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_finish_reason = MagicMock()
+    mock_finish_reason.name = "PROHIBITED_CONTENT"
+    mock_part = MagicMock(inline_data=None, text=None)
+    mock_candidate = MagicMock(finish_reason=mock_finish_reason)
+    mock_candidate.content.parts = [mock_part]
+    mock_client.models.generate_content.return_value = MagicMock(candidates=[mock_candidate])
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GeminiProvider().generate("a sunset")
+
+    assert exc_info.value.error_type == "moderation"
+    assert "prohibited content" in exc_info.value.user_message.lower()
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_image.genai.Client")
+def test_gemini_image_auth_error_is_classified(mock_client_cls):
+    from backends.gemini_image import GeminiProvider
+    from google.genai import errors as genai_errors
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_content.side_effect = genai_errors.APIError(
+        401, {"error": {"status": "UNAUTHENTICATED", "message": "bad key", "code": 401}},
+    )
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GeminiProvider().generate("a sunset")
+
+    assert exc_info.value.error_type == "auth"
+    assert "API key" in exc_info.value.user_message
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_image.genai.Client")
 def test_gemini_image_with_reference(mock_client_cls):
     from backends.gemini_image import GeminiProvider
 
@@ -358,6 +418,42 @@ def test_grok_text_no_system_when_empty(mock_openai_cls):
 
     call_kwargs = mock_client.chat.completions.create.call_args
     assert call_kwargs.kwargs["messages"] == [{"role": "user", "content": "hello"}]
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_text.OpenAI")
+def test_grok_text_content_moderated_is_moderation(mock_openai_cls):
+    from backends.grok_text import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_client.chat.completions.create.side_effect = RuntimeError(
+        "Grok content moderated, try a different idea"
+    )
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GrokProvider().generate("be helpful", "something disallowed")
+
+    assert exc_info.value.error_type == "moderation"
+    assert "flagged by content moderation" in exc_info.value.user_message
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_text.OpenAI")
+def test_grok_text_moderation_service_error_is_transient(mock_openai_cls):
+    from backends.grok_text import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_client.chat.completions.create.side_effect = RuntimeError(
+        "Error calling moderation service"
+    )
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GrokProvider().generate("be helpful", "hello")
+
+    assert exc_info.value.error_type == "moderation_unavailable"
+    assert "not your prompt" in exc_info.value.user_message
 
 
 # ── Grok Image ──────────────────────────────────────────────────────────────
@@ -826,6 +922,38 @@ def test_grok_video_failed_raises(mock_requests):
 
     assert exc_info.value.cost_actual == 0.35
     assert exc_info.value.cost_in_usd_ticks == 3500000000
+    assert exc_info.value.error_type == "provider_error"
+    assert exc_info.value.user_message
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_video.requests")
+def test_grok_video_moderation_failure_is_classified(mock_requests):
+    from backends.grok_video import GrokProvider
+    import pytest
+
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-789"}
+    mock_submit.raise_for_status = MagicMock()
+
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "failed",
+        "error": {"code": "invalid_argument", "message": "content was moderated"},
+        "usage": {"cost_in_usd_ticks": 500000000},
+    }
+    mock_status.raise_for_status = MagicMock()
+
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.return_value = mock_status
+
+    with patch("backends.grok_video.time.sleep"):
+        with pytest.raises(ProviderGenerationError) as exc_info:
+            GrokProvider().generate("a dancing cat")
+
+    assert exc_info.value.error_type == "moderation"
+    assert "flagged by content moderation" in exc_info.value.user_message
+    assert exc_info.value.cost_actual == 0.05
     assert exc_info.value.cost_estimate == 10 * 0.05
 
 
@@ -925,6 +1053,46 @@ def test_gemini_video_error_raises(mock_client_cls):
     with patch("backends.gemini_video.time.sleep"):
         with pytest.raises(RuntimeError, match="Video generation failed"):
             GeminiProvider().generate("x")
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_rai_filtered_is_moderation(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_videos.return_value = MagicMock(done=False)
+    op = MagicMock(done=True, error=None)
+    op.response.generated_videos = []
+    op.response.rai_media_filtered_reasons = ["Sexually explicit content"]
+    mock_client.operations.get.return_value = op
+
+    with patch("backends.gemini_video.time.sleep"):
+        with pytest.raises(ProviderGenerationError) as exc_info:
+            GeminiProvider().generate("x")
+
+    assert exc_info.value.error_type == "moderation"
+    assert "Sexually explicit content" in exc_info.value.user_message
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_video.genai.Client")
+def test_gemini_video_auth_error_is_classified(mock_client_cls):
+    from backends.gemini_video import GeminiProvider
+    from google.genai import errors as genai_errors
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_client.models.generate_videos.side_effect = genai_errors.APIError(
+        403, {"error": {"status": "PERMISSION_DENIED", "message": "no access", "code": 403}},
+    )
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GeminiProvider().generate("x")
+
+    assert exc_info.value.error_type == "auth"
+    assert "API key" in exc_info.value.user_message
 
 
 def test_gemini_video_rejects_edit_extend_operation():

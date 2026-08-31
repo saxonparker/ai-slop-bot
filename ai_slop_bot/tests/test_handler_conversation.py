@@ -732,3 +732,47 @@ def test_continuation_event_mention_phantom_drop_posts_thread_notice(
     assert notice_args[1] == "1700.0"
     assert "modified by another in-flight turn" in notice_args[2]
     mock_slack.post_error.assert_not_called()
+
+
+# ── _describe_error_for_user ─────────────────────────────────────────────────
+
+def test_describe_error_uses_provider_user_message():
+    from usage import ProviderGenerationError
+
+    exc = ProviderGenerationError(
+        "raw provider text", backend="grok", error_type="moderation",
+        user_message="Grok declined to generate this — flagged by content moderation.",
+    )
+    assert ai_slop_bot._describe_error_for_user(exc) == (
+        "Grok declined to generate this — flagged by content moderation."
+    )
+
+
+def test_describe_error_falls_back_to_raw_message():
+    exc = RuntimeError("some unrelated bug")
+    assert ai_slop_bot._describe_error_for_user(exc) == "some unrelated bug"
+
+
+def test_describe_error_appends_billed_cost():
+    from usage import ProviderGenerationError
+
+    exc = ProviderGenerationError(
+        "raw provider text", backend="grok", error_type="moderation",
+        user_message="Grok declined to generate this.",
+        cost_actual=0.05,
+    )
+    assert ai_slop_bot._describe_error_for_user(exc) == (
+        "Grok declined to generate this. (this still cost $0.05)"
+    )
+
+
+def test_describe_error_omits_cost_when_unbilled():
+    from usage import ProviderGenerationError
+
+    exc = ProviderGenerationError(
+        "raw provider text", backend="grok", error_type="invalid_request",
+        user_message="Grok rejected the request as malformed.",
+    )
+    assert ai_slop_bot._describe_error_for_user(exc) == (
+        "Grok rejected the request as malformed."
+    )

@@ -8,6 +8,8 @@ from usage import (
     GenerationResult,
     ProviderGenerationError,
     COST_PER_VIDEO,
+    classify_xai_error,
+    classify_xai_video_failure,
     xai_cost_from_error,
     xai_cost_from_usage,
 )
@@ -89,11 +91,13 @@ class GrokProvider:
             resp.raise_for_status()
         except requests.HTTPError as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
+            error_type, user_message = classify_xai_error(exc)
             raise ProviderGenerationError(
                 str(exc),
                 backend="grok",
                 model=model,
-                error_type=_classify_error(exc),
+                error_type=error_type,
+                user_message=user_message,
                 cost_estimate=duration * COST_PER_VIDEO["grok"],
                 cost_actual=cost_actual,
                 cost_in_usd_ticks=cost_ticks,
@@ -130,25 +134,16 @@ class GrokProvider:
                 )
             if status in ("failed", "expired"):
                 cost_actual, cost_ticks = xai_cost_from_usage(data.get("usage"))
+                error_type, user_message = classify_xai_video_failure(data)
                 raise ProviderGenerationError(
                     f"Video generation {status}: {data}",
                     backend="grok",
                     model=model,
-                    error_type=_classify_error(data),
+                    error_type=error_type,
+                    user_message=user_message,
                     cost_estimate=duration * COST_PER_VIDEO["grok"],
                     cost_actual=cost_actual,
                     cost_in_usd_ticks=cost_ticks,
                 )
 
         raise RuntimeError("Video generation timed out waiting for completion")
-
-
-def _classify_error(error) -> str:
-    text = str(error).lower()
-    if "moderation" in text or "safety" in text or "policy" in text:
-        return "moderation"
-    if "timeout" in text or "timed out" in text:
-        return "timeout"
-    if "expired" in text:
-        return "expired"
-    return "provider_error"

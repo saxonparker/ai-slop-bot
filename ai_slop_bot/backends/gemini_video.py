@@ -5,9 +5,15 @@ import os
 import time
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from PIL import Image
-from usage import GenerationResult, COST_PER_VIDEO
+from usage import (
+    COST_PER_VIDEO,
+    GenerationResult,
+    ProviderGenerationError,
+    classify_gemini_error,
+)
 
 
 POLL_INTERVAL = 10
@@ -47,27 +53,79 @@ class GeminiProvider:
         }
         if source_image:
             request["image"] = _to_pil_image(source_image)
-        operation = client.models.generate_videos(**request)
+        cost = duration * COST_PER_VIDEO["gemini"]
+        try:
+            operation = client.models.generate_videos(**request)
 
-        # Poll the operation until the video is ready.
-        for _ in range(MAX_POLL_ATTEMPTS):
-            time.sleep(POLL_INTERVAL)
-            operation = client.operations.get(operation)
-            if operation.done:
-                break
-        else:
-            raise RuntimeError("Video generation timed out waiting for completion")
+            # Poll the operation until the video is ready.
+            for _ in range(MAX_POLL_ATTEMPTS):
+                time.sleep(POLL_INTERVAL)
+                operation = client.operations.get(operation)
+                if operation.done:
+                    break
+            else:
+                raise ProviderGenerationError(
+                    "Video generation timed out waiting for completion",
+                    backend="gemini",
+                    model=model,
+                    error_type="timeout",
+                    user_message="Veo timed out generating this video. Try again.",
+                    cost_estimate=cost,
+                )
+        except genai_errors.APIError as exc:
+            error_type, user_message = classify_gemini_error(exc)
+            raise ProviderGenerationError(
+                str(exc),
+                backend="gemini",
+                model=model,
+                error_type=error_type,
+                user_message=user_message,
+                cost_estimate=cost,
+            ) from exc
 
         if operation.error:
-            raise RuntimeError(f"Video generation failed: {operation.error}")
+            message = (
+                operation.error.get("message", operation.error)
+                if isinstance(operation.error, dict) else operation.error
+            )
+            raise ProviderGenerationError(
+                f"Video generation failed: {operation.error}",
+                backend="gemini",
+                model=model,
+                error_type="provider_error",
+                user_message=f"Veo failed to generate this video: {message}",
+                cost_estimate=cost,
+            )
 
         videos = operation.response.generated_videos if operation.response else None
         if not videos:
-            raise RuntimeError(f"Veo returned no video. Response: {operation.response}")
+            filtered_reasons = (
+                getattr(operation.response, "rai_media_filtered_reasons", None)
+                if operation.response else None
+            )
+            if filtered_reasons:
+                raise ProviderGenerationError(
+                    f"Veo filtered video: {filtered_reasons}",
+                    backend="gemini",
+                    model=model,
+                    error_type="moderation",
+                    user_message=(
+                        "Veo declined to generate this video — flagged by content safety "
+                        "filtering: " + "; ".join(filtered_reasons) + ". Try rephrasing."
+                    ),
+                    cost_estimate=cost,
+                )
+            raise ProviderGenerationError(
+                f"Veo returned no video. Response: {operation.response}",
+                backend="gemini",
+                model=model,
+                error_type="provider_error",
+                user_message="Veo returned no video for this prompt. Try again.",
+                cost_estimate=cost,
+            )
 
         video = videos[0].video
         video_data = client.files.download(file=video) or video.video_bytes
-        cost = duration * COST_PER_VIDEO["gemini"]
         return GenerationResult(
             content=video_data,
             backend="gemini",

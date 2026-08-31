@@ -10,6 +10,9 @@ sys.path.append(".")
 
 from usage import (
     GenerationResult,
+    classify_gemini_error,
+    classify_xai_error,
+    classify_xai_video_failure,
     effective_cost,
     estimate_text_cost,
     get_total_cost,
@@ -93,6 +96,120 @@ def test_xai_cost_from_error_response_json():
 def test_effective_cost_prefers_actual():
     record = {"cost_estimate": Decimal("0.05"), "cost_actual": Decimal("0.02")}
     assert effective_cost(record) == 0.02
+
+
+# ── classify_xai_error ───────────────────────────────────────────────────────
+
+def test_classify_xai_error_auth():
+    exc = SimpleNamespace(status_code=401, body=None, response=None, payload=None)
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "auth"
+    assert "API key" in message
+
+
+def test_classify_xai_error_rate_limit():
+    exc = SimpleNamespace(status_code=429, body=None, response=None, payload=None)
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "rate_limit"
+    assert "rate-limiting" in message
+
+
+def test_classify_xai_error_moderation_rejection():
+    exc = RuntimeError("Grok content moderated, try a different idea")
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "moderation"
+    assert "flagged by content moderation" in message
+
+
+def test_classify_xai_error_moderation_service_unavailable():
+    exc = RuntimeError("Error calling moderation service")
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "moderation_unavailable"
+    assert "not your prompt" in message
+
+
+def test_classify_xai_error_invalid_request():
+    exc = RuntimeError("Argument not supported on this model: stop")
+    exc.status_code = 400
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "invalid_request"
+    assert "malformed" in message
+
+
+def test_classify_xai_error_unknown_falls_back_to_provider_error():
+    exc = RuntimeError("something xAI-shaped broke")
+    error_type, _ = classify_xai_error(exc)
+    assert error_type == "provider_error"
+
+
+# ── classify_xai_video_failure ───────────────────────────────────────────────
+
+def test_classify_xai_video_failure_expired():
+    error_type, message = classify_xai_video_failure({"status": "expired"})
+    assert error_type == "expired"
+    assert "expired" in message
+
+
+def test_classify_xai_video_failure_moderation():
+    data = {
+        "status": "failed",
+        "error": {"code": "invalid_argument", "message": "content was moderated"},
+    }
+    error_type, message = classify_xai_video_failure(data)
+    assert error_type == "moderation"
+    assert "flagged by content moderation" in message
+
+
+def test_classify_xai_video_failure_invalid_argument_non_moderation():
+    data = {
+        "status": "failed",
+        "error": {"code": "invalid_argument", "message": "duration must be <= 10"},
+    }
+    error_type, message = classify_xai_video_failure(data)
+    assert error_type == "invalid_request"
+    assert "duration must be" in message
+
+
+def test_classify_xai_video_failure_permission_denied():
+    data = {"status": "failed", "error": {"code": "permission_denied", "message": "nope"}}
+    error_type, message = classify_xai_video_failure(data)
+    assert error_type == "auth"
+    assert "API key" in message
+
+
+def test_classify_xai_video_failure_service_unavailable():
+    data = {"status": "failed", "error": {"code": "service_unavailable", "message": "down"}}
+    error_type, _ = classify_xai_video_failure(data)
+    assert error_type == "provider_error"
+
+
+# ── classify_gemini_error ────────────────────────────────────────────────────
+
+def test_classify_gemini_error_auth():
+    exc = SimpleNamespace(status="UNAUTHENTICATED", code=401)
+    error_type, message = classify_gemini_error(exc)
+    assert error_type == "auth"
+    assert "API key" in message
+
+
+def test_classify_gemini_error_rate_limit():
+    exc = SimpleNamespace(status="RESOURCE_EXHAUSTED", code=429)
+    error_type, message = classify_gemini_error(exc)
+    assert error_type == "rate_limit"
+    assert "rate-limiting" in message
+
+
+def test_classify_gemini_error_invalid_request():
+    exc = SimpleNamespace(status="INVALID_ARGUMENT", code=400)
+    error_type, message = classify_gemini_error(exc)
+    assert error_type == "invalid_request"
+    assert "malformed" in message
+
+
+def test_classify_gemini_error_unknown_falls_back_to_provider_error():
+    exc = SimpleNamespace(status="INTERNAL", code=500)
+    error_type, _ = classify_gemini_error(exc)
+    assert error_type == "provider_error"
 
 
 # ── record_usage ─────────────────────────────────────────────────────────────

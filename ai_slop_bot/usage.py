@@ -52,6 +52,7 @@ class ProviderGenerationError(RuntimeError):
         backend: str,
         model: str = "",
         error_type: str = "provider_error",
+        user_message: str | None = None,
         cost_estimate: float = 0.0,
         cost_actual: float | None = None,
         cost_in_usd_ticks: int | None = None,
@@ -60,6 +61,7 @@ class ProviderGenerationError(RuntimeError):
         self.backend = backend
         self.model = model
         self.error_type = error_type
+        self.user_message = user_message
         self.cost_estimate = cost_estimate
         self.cost_actual = cost_actual
         self.cost_in_usd_ticks = cost_in_usd_ticks
@@ -103,6 +105,125 @@ def xai_cost_from_error(exc: Exception) -> tuple[float | None, int | None]:
         if cost != (None, None):
             return cost
     return None, None
+
+
+def _xai_error_status(exc: Exception) -> int | None:
+    """Best-effort HTTP status code from an openai-SDK or requests error."""
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None)
+
+
+def _xai_error_message(exc: Exception) -> str:
+    """Best-effort human-readable message from a Grok/xAI error payload."""
+    for payload in _error_payloads(exc):
+        if isinstance(payload, dict):
+            message = payload.get("error") or payload.get("message")
+            if message:
+                return str(message)
+    return str(exc)
+
+
+def classify_xai_error(exc: Exception, backend_label: str = "Grok") -> tuple[str, str]:
+    """Classify a Grok/xAI SDK or HTTP error into (error_type, user_message).
+
+    Keys off HTTP status first (401/403/429 are unambiguous). xAI does not
+    document a stable error-code enum for chat/image endpoints, so 400/422
+    falls back to matching the message text — but distinguishes a genuine
+    content rejection ("content moderated") from the moderation checker
+    itself failing ("error calling moderation service"), which are easy to
+    conflate since both contain "moderation".
+    """
+    status = _xai_error_status(exc)
+    message = _xai_error_message(exc)
+    lower = message.lower()
+
+    if status in (401, 403):
+        return "auth", (
+            f"{backend_label}'s API key looks invalid or expired — an admin needs to check it."
+        )
+    if status == 429:
+        return "rate_limit", (
+            f"{backend_label} is rate-limiting requests right now. Try again in a minute."
+        )
+    if "moderation service" in lower:
+        return "moderation_unavailable", (
+            f"{backend_label}'s moderation check failed on their end (not your prompt) "
+            "— this is usually transient, try again."
+        )
+    if "content moderat" in lower or "moderated" in lower or "safety" in lower or "policy" in lower:
+        return "moderation", (
+            f"{backend_label} declined to generate this — it was flagged by content "
+            "moderation. Try rephrasing your prompt."
+        )
+    if "timeout" in lower or "timed out" in lower:
+        return "timeout", f"{backend_label} timed out. Try again."
+    if status in (400, 422) or "invalid" in lower:
+        return "invalid_request", (
+            f"{backend_label} rejected the request as malformed — likely a bug, not "
+            f"something in your prompt. ({message[:200]})"
+        )
+    return "provider_error", f"{backend_label} failed to generate this: {message[:200]}"
+
+
+def classify_xai_video_failure(data: dict, backend_label: str = "Grok") -> tuple[str, str]:
+    """Classify a failed/expired Grok video status-poll payload.
+
+    The videos/{id} status endpoint documents a real error.code enum
+    (unlike chat/image), but moderation isn't split out at that level —
+    "invalid_argument" covers both a real moderation rejection and a plain
+    bad-input error, so those still need a message-text check.
+    """
+    if not isinstance(data, dict):
+        return "provider_error", f"{backend_label} video generation failed."
+    if data.get("status") == "expired":
+        return "expired", f"{backend_label} video generation expired before finishing. Try again."
+
+    error = data.get("error") or {}
+    code = str(error.get("code") or "").lower()
+    message = str(error.get("message") or data)
+    lower = message.lower()
+
+    if code == "invalid_argument":
+        if "moderat" in lower:
+            return "moderation", (
+                f"{backend_label} declined to generate this video — flagged by content "
+                "moderation. Try rephrasing your prompt."
+            )
+        return "invalid_request", (
+            f"{backend_label} rejected the video request as malformed: {message[:200]}"
+        )
+    if code == "permission_denied":
+        return "auth", (
+            f"{backend_label}'s API key looks invalid or lacks access — an admin needs to check it."
+        )
+    if code == "failed_precondition":
+        return "invalid_request", f"{backend_label} rejected the video request: {message[:200]}"
+    if code in ("service_unavailable", "internal_error"):
+        return "provider_error", (
+            f"{backend_label} had an internal error generating this video. Try again."
+        )
+    return "provider_error", f"{backend_label} video generation failed: {message[:200]}"
+
+
+def classify_gemini_error(exc: Exception, backend_label: str = "Gemini") -> tuple[str, str]:
+    """Classify a google.genai.errors.APIError into (error_type, user_message)."""
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+
+    if status in ("UNAUTHENTICATED", "PERMISSION_DENIED") or code in (401, 403):
+        return "auth", (
+            f"{backend_label}'s API key looks invalid or expired — an admin needs to check it."
+        )
+    if status == "RESOURCE_EXHAUSTED" or code == 429:
+        return "rate_limit", (
+            f"{backend_label} is rate-limiting requests right now. Try again in a minute."
+        )
+    if status == "INVALID_ARGUMENT" or code == 400:
+        return "invalid_request", f"{backend_label} rejected the request as malformed: {exc}"
+    return "provider_error", f"{backend_label} failed to generate this: {exc}"
 
 
 def effective_cost(record: dict) -> float:
