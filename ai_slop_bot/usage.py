@@ -35,7 +35,7 @@ COST_PER_VIDEO = {
 COST_PER_IMAGE = {
     "gemini": 0.04,
     "openai": 0.08,
-    "grok": 0.05,  # grok-imagine-image-quality
+    "grok": 0.04,  # grok-imagine-image-2.0
 }
 
 TICKS_PER_USD = 10_000_000_000

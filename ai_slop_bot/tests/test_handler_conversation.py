@@ -434,7 +434,7 @@ def test_image_provider_failure_records_failed_request(
     assert kwargs["mode"] == "image"
     assert kwargs["backend"] == "grok"
     assert kwargs["error_type"] == "moderation"
-    assert kwargs["cost_estimate"] == 0.05
+    assert kwargs["cost_estimate"] == 0.04
     mock_slack.post_error.assert_called_once()
 
 

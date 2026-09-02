@@ -78,7 +78,7 @@ Generated outputs still use the same S3/CloudFront upload path.
 
 Backend support differs slightly:
 
-- Grok image and video support reference images.
+- Grok image supports up to 5 reference images for edits; Grok video supports reference images.
 - Grok video supports `--edit-video` and `--extend-video` source-video operations.
 - Grok video supports up to 3 preset voices via `--voice`; Gemini video does not.
 - Gemini image supports reference images.
@@ -232,7 +232,7 @@ Two-Lambda architecture:
 | Text  | grok       | `grok-4-1-fast-non-reasoning`     |         |
 | Image | gemini     | `gemini-3.1-flash-image`          |         |
 | Image | openai     | `dall-e-3`                        |         |
-| Image | grok       | `grok-imagine-image-quality`      | Yes     |
+| Image | grok       | `grok-imagine-image-2.0`          | Yes     |
 | Video | grok       | `grok-imagine-video-1.5`          | Yes     |
 | Video | gemini     | `veo-3.1-fast-generate-preview`   |         |
 

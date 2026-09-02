@@ -479,7 +479,8 @@ def test_grok_image_generate(mock_openai_cls, mock_requests_get):
     assert isinstance(result, GenerationResult)
     assert result.content == fake_bytes
     assert result.backend == "grok"
-    assert result.cost_estimate == 0.05
+    assert result.model == "grok-imagine-image-2.0"
+    assert result.cost_estimate == 0.04
     assert result.cost_actual == 0.02
     assert result.cost_in_usd_ticks == 200000000
     mock_openai_cls.assert_called_once_with(api_key="fake-key", base_url="https://api.x.ai/v1")
@@ -1205,3 +1206,43 @@ def test_gemini_video_rejects_edit_extend_operation():
             video_op="extend",
             video_url="https://example.com/source.mp4",
         )
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_image.requests")
+def test_grok_image_edit_allows_five_references(mock_requests):
+    from backends.grok_image import GrokProvider
+    from media_refs import ResolvedImage
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"data": [{"b64_json": "aGk="}]}
+    mock_requests.post.return_value = mock_resp
+
+    refs = [
+        ResolvedImage(data=b"r", mime_type="image/jpeg",
+                      original_url=f"https://example.com/{index}.jpg")
+        for index in range(5)
+    ]
+    result = GrokProvider().generate("composite these", references=refs)
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["model"] == "grok-imagine-image-2.0"
+    assert len(payload["images"]) == 5
+    assert result.model == "grok-imagine-image-2.0"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_image.requests")
+def test_grok_image_edit_rejects_six_references(mock_requests):
+    from backends.grok_image import GrokProvider
+    from media_refs import ResolvedImage
+
+    refs = [
+        ResolvedImage(data=b"r", mime_type="image/jpeg",
+                      original_url=f"https://example.com/{index}.jpg")
+        for index in range(6)
+    ]
+    with pytest.raises(ValueError, match="at most 5 reference images"):
+        GrokProvider().generate("composite these", references=refs)
+    mock_requests.post.assert_not_called()

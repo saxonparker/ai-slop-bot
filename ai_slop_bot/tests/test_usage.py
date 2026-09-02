@@ -317,7 +317,7 @@ def test_record_failed_request_writes_item(mock_boto3):
         "testuser",
         mode="image",
         backend="grok",
-        model="grok-imagine-image-quality",
+        model="grok-imagine-image-2.0",
         error_type="moderation",
         error_message="blocked by moderation",
         cost_estimate=0.05,

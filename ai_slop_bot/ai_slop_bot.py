@@ -437,7 +437,7 @@ def _model_for_request(mode: str, backend: str) -> str:
     if mode == "image":
         defaults = {
             "gemini": "gemini-3.1-flash-image",
-            "grok": "grok-imagine-image-quality",
+            "grok": "grok-imagine-image-2.0",
             "openai": "dall-e-3",
         }
         return os.environ.get("IMAGE_MODEL", defaults.get(backend, ""))

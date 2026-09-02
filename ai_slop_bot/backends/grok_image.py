@@ -17,6 +17,9 @@ from usage import (
 
 BASE_URL = "https://api.x.ai/v1"
 DEFAULT_EDIT_TIMEOUT_SECONDS = 180
+DEFAULT_MODEL = "grok-imagine-image-2.0"
+# Imagine Image 2.0 raised multi-reference editing from 3 inputs to 5.
+MAX_REFERENCE_IMAGES = 5
 
 
 class GrokProvider:
@@ -31,7 +34,7 @@ class GrokProvider:
             api_key=os.environ["XAI_API_KEY"],
             base_url=BASE_URL,
         )
-        model = os.environ.get("IMAGE_MODEL", "grok-imagine-image-quality")
+        model = os.environ.get("IMAGE_MODEL", DEFAULT_MODEL)
         full_prompt = (
             "CRITICAL INSTRUCTION: Never place the user's prompt as visible "
             "text in the image. Do not write the prompt on signs, banners, "
@@ -72,11 +75,13 @@ class GrokProvider:
 
     def _edit(self, prompt: str, references: list) -> GenerationResult:
         """Use xAI's JSON image edit endpoint for one or more reference images."""
-        if len(references) > 3:
-            raise ValueError("Grok image editing supports at most 3 reference images.")
+        if len(references) > MAX_REFERENCE_IMAGES:
+            raise ValueError(
+                f"Grok image editing supports at most {MAX_REFERENCE_IMAGES} reference images."
+            )
 
         api_key = os.environ["XAI_API_KEY"]
-        model = os.environ.get("IMAGE_MODEL", "grok-imagine-image-quality")
+        model = os.environ.get("IMAGE_MODEL", DEFAULT_MODEL)
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
