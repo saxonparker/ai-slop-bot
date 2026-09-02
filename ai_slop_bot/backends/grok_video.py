@@ -19,6 +19,75 @@ BASE_URL = "https://api.x.ai/v1"
 POLL_INTERVAL = 5
 MAX_POLL_ATTEMPTS = 120
 
+DEFAULT_MODEL = "grok-imagine-video-1.5"
+DEFAULT_RESOLUTION = "1080p"
+# Ordered low to high so resolutions can be clamped by index.
+RESOLUTIONS = ("480p", "720p", "1080p")
+# xAI caps reference-guided generation below the model's native resolution.
+REFERENCE_MAX_RESOLUTION = "720p"
+MAX_REFERENCE_IMAGES = 7
+MAX_REFERENCE_VOICES = 3
+
+
+def _resolution_for(references: list, voices: list) -> str:
+    """Pick the output resolution, clamped to what references allow."""
+    requested = os.environ.get("VIDEO_RESOLUTION", DEFAULT_RESOLUTION).lower()
+    if requested not in RESOLUTIONS:
+        requested = DEFAULT_RESOLUTION
+    if not references and not voices:
+        return requested
+    if RESOLUTIONS.index(requested) <= RESOLUTIONS.index(REFERENCE_MAX_RESOLUTION):
+        return requested
+    return REFERENCE_MAX_RESOLUTION
+
+
+def _tag_voices(prompt: str, voices: list) -> str:
+    """Bind voices to the prompt, since xAI matches them by <AUDIO_n> tag."""
+    if not voices or "<AUDIO_" in prompt.upper():
+        return prompt
+    tags = ", ".join(f"<AUDIO_{index}>" for index in range(len(voices)))
+    if len(voices) == 1:
+        return f"{prompt} The speaker uses the voice from {tags}."
+    return f"{prompt} The speakers use the voices from {tags}."
+
+
+def _generation_payload(  # pylint: disable=too-many-arguments
+    model: str,
+    prompt: str,
+    duration: int,
+    *,
+    source_image,
+    references: list,
+    voices: list,
+) -> dict:
+    """Build the /videos/generations body, validating reference limits."""
+    if source_image and references:
+        raise ValueError("Grok video supports either a start image or reference images, not both.")
+    if len(references) > MAX_REFERENCE_IMAGES:
+        raise ValueError(
+            f"Grok reference-to-video supports at most {MAX_REFERENCE_IMAGES} reference images."
+        )
+    if len(voices) > MAX_REFERENCE_VOICES:
+        raise ValueError(f"Grok video supports at most {MAX_REFERENCE_VOICES} voices.")
+    if references and duration > 10:
+        raise ValueError("Grok reference-to-video supports a maximum duration of 10 seconds.")
+
+    payload = {
+        "model": model,
+        "prompt": _tag_voices(prompt, voices),
+        "duration": duration,
+        "resolution": _resolution_for(references, voices),
+    }
+    if source_image:
+        payload["image"] = {"url": source_image.provider_url()}
+    if references:
+        payload["reference_images"] = [
+            {"url": reference.provider_url()} for reference in references
+        ]
+    if voices:
+        payload["reference_audios"] = [{"voice_id": voice} for voice in voices]
+    return payload
+
 
 class GrokProvider:
     """Video generation using xAI Grok."""
@@ -30,11 +99,12 @@ class GrokProvider:
         source_image=None,
         references: list | None = None,
         *,
+        voices: list | None = None,
         video_op: str | None = None,
         video_url: str | None = None,
     ) -> GenerationResult:
         api_key = os.environ["XAI_API_KEY"]
-        model = os.environ.get("VIDEO_MODEL", "grok-imagine-video")
+        model = os.environ.get("VIDEO_MODEL", DEFAULT_MODEL)
         duration = duration or int(os.environ.get("VIDEO_DURATION", "10"))
         headers = {
             "Content-Type": "application/json",
@@ -59,22 +129,15 @@ class GrokProvider:
                 "duration": duration,
             }
         else:
-            references = references or []
-            if source_image and references:
-                raise ValueError("Grok video supports either a start image or reference images, not both.")
-            if references and len(references) > 7:
-                raise ValueError("Grok reference-to-video supports at most 7 reference images.")
-            if references and duration > 10:
-                raise ValueError("Grok reference-to-video supports a maximum duration of 10 seconds.")
             endpoint = f"{BASE_URL}/videos/generations"
-            payload = {"model": model, "prompt": prompt, "duration": duration}
-            if source_image:
-                payload["image"] = {"url": source_image.provider_url()}
-            if references:
-                payload["reference_images"] = [
-                    {"url": reference.provider_url()}
-                    for reference in references
-                ]
+            payload = _generation_payload(
+                model,
+                prompt,
+                duration,
+                source_image=source_image,
+                references=references or [],
+                voices=voices or [],
+            )
 
         return self._submit_and_poll(endpoint, headers, payload, model, duration)
 

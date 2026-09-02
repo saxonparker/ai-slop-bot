@@ -60,6 +60,14 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   Video edit/extend source files are mutually exclusive with reference images.
   Uploaded reference/source files are deleted from Slack after the bot downloads them.
 
+*Video voices (Grok only):*
+  `{CANONICAL_SLASH_COMMAND} -v --voice eve she pitches the product` — narrate with a preset voice
+  `{CANONICAL_SLASH_COMMAND} -v --voice eve --voice leo they argue` — up to 3 voices; repeat the flag
+  Preset voices in the upload form: eve, ara, rex, sal, leo. `--voice` also accepts newer xAI voice ids.
+  Tag voices in the prompt as `<AUDIO_0>`, `<AUDIO_1>`, `<AUDIO_2>` to control who speaks;
+  untagged prompts get the tags appended automatically.
+  Voices and reference images render at 720p; everything else renders at 1080p.
+
 *Conversations:*
   `{CANONICAL_SLASH_COMMAND} -c <prompt>` starts a multi-turn text conversation rooted in a
   Slack thread. Continue it by `@`-mentioning the bot in the thread:
@@ -93,9 +101,15 @@ _LONG_FLAGS = {
     "--extend-video",
     "--ref",
     "--start",
+    "--voice",
     "--credit",
     "--bufo",
 }
+
+# Preset voice roster offered in the upload modal. The --voice flag accepts any
+# xAI voice id, so newer flagship voices work without redeploying dispatch.
+PRESET_VOICES = ("eve", "ara", "rex", "sal", "leo")
+MAX_VOICES = 3
 
 
 def _normalize_flag_token(token: str) -> str:
@@ -217,6 +231,7 @@ def _handle_block_action(payload: dict):
         "reference_role": _selected_value(
             _state_value(state, "reference_role_block", "reference_role")
         ),
+        "voices": _selected_values(_state_value(state, "voices_block", "voices")),
     }
     request = {
         "view_id": view.get("id"),
@@ -352,6 +367,7 @@ def _parse_upload_command(prompt: str) -> dict:
     backend = ""
     video_op = "generate"
     video_url = ""
+    voices = []
     prompt_tokens = []
     i = 0
     while i < len(tokens):
@@ -382,6 +398,9 @@ def _parse_upload_command(prompt: str) -> dict:
             backend = tokens[i].lower()
         elif lower in ("--ref", "--start") and i + 1 < len(tokens):
             i += 1
+        elif lower == "--voice" and i + 1 < len(tokens):
+            i += 1
+            voices.append(tokens[i].lower())
         else:
             prompt_tokens.append(token)
         i += 1
@@ -391,6 +410,7 @@ def _parse_upload_command(prompt: str) -> dict:
         "backend": backend,
         "video_op": video_op,
         "video_url": video_url,
+        "voices": voices,
         "prompt": " ".join(prompt_tokens),
     }
 
@@ -520,6 +540,7 @@ def _upload_blocks(upload_options: dict) -> list[dict]:
                 if reference_role in ("start", "reference")
                 else "start"
             )
+            blocks.append(_voice_block(upload_options.get("voices") or []))
             blocks.append({
                 "type": "input",
                 "block_id": "reference_role_block",
@@ -558,6 +579,29 @@ def _upload_blocks(upload_options: dict) -> list[dict]:
         files_block["optional"] = True
     blocks.append(files_block)
     return blocks
+
+
+def _voice_block(selected: list) -> dict:
+    """Optional voice picker for reference-to-video narration."""
+    chosen = [voice for voice in selected if voice in PRESET_VOICES][:MAX_VOICES]
+    element = {
+        "type": "multi_static_select",
+        "action_id": "voices",
+        "max_selected_items": MAX_VOICES,
+        "placeholder": {"type": "plain_text", "text": "No voice"},
+        "options": [_option(voice.title(), voice) for voice in PRESET_VOICES],
+    }
+    if chosen:
+        element["initial_options"] = [
+            _option(voice.title(), voice) for voice in chosen
+        ]
+    return {
+        "type": "input",
+        "optional": True,
+        "block_id": "voices_block",
+        "label": {"type": "plain_text", "text": "Voices"},
+        "element": element,
+    }
 
 
 def _plain_text_input(action_id: str, *, initial_value: str = "",
@@ -615,6 +659,7 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     video_url = (_state_value(state, "video_url_block", "video_url").get("value") or "").strip()
     source_video_refs = _file_refs(_state_value(state, "source_video_block", "source_video"))
     role = _selected_value(_state_value(state, "reference_role_block", "reference_role"))
+    voices = _selected_values(_state_value(state, "voices_block", "voices"))[:MAX_VOICES]
     file_refs = _file_refs(_state_value(state, "files_block", "files"))
     is_video_source_op = mode == "video" and video_op in ("edit", "extend")
 
@@ -636,6 +681,8 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
         errors["files_block"] = "Upload at least one image."
     if mode == "video" and not is_video_source_op and role == "start" and len(file_refs) > 1:
         errors["files_block"] = "Start-frame video accepts exactly one image."
+    if voices and backend == "gemini":
+        errors["voices_block"] = "Voices are only supported on the grok backend."
     if duration:
         try:
             int(duration)
@@ -649,6 +696,8 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
         command_parts.append(duration)
     if backend:
         command_parts.extend(["-b", backend])
+    for voice in voices:
+        command_parts.extend(["--voice", voice])
     if is_video_source_op:
         source_video = None
         if has_video_url:
@@ -698,6 +747,14 @@ def _state_value(state: dict, block_id: str, action_id: str) -> dict:
 
 def _selected_value(value: dict) -> str:
     return ((value.get("selected_option") or {}).get("value") or "")
+
+
+def _selected_values(value: dict) -> list[str]:
+    return [
+        option.get("value", "")
+        for option in (value.get("selected_options") or [])
+        if option.get("value")
+    ]
 
 
 def _file_ids(value: dict) -> list[str]:

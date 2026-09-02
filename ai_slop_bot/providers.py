@@ -28,6 +28,7 @@ class VideoProvider(Protocol):
         source_image: ResolvedImage | None = None,
         references: list[ResolvedImage] | None = None,
         *,
+        voices: list | None = None,
         video_op: str | None = None,
         video_url: str | None = None,
     ) -> GenerationResult: ...

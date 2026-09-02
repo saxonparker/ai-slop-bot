@@ -683,3 +683,124 @@ def test_upload_modal_video_edit_submission_rejects_url_and_upload(mock_boto):
     assert body["response_action"] == "errors"
     assert "source_video_block" in body["errors"]
     mock_sns.publish.assert_not_called()
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_video_generate_modal_offers_voices(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+
+    ai_slop_dispatch.dispatch(
+        _slack_event("-v --upload make it move", trigger_id="trig"),
+        None,
+    )
+
+    payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
+    assert "voices_block" in blocks
+    element = blocks["voices_block"]["element"]
+    assert element["type"] == "multi_static_select"
+    assert element["max_selected_items"] == 3
+    assert [option["value"] for option in element["options"]] == [
+        "eve", "ara", "rex", "sal", "leo",
+    ]
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_video_upload_modal_prefills_voices_from_command(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+
+    ai_slop_dispatch.dispatch(
+        _slack_event("-v --upload --voice leo make it move", trigger_id="trig"),
+        None,
+    )
+
+    payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
+    element = blocks["voices_block"]["element"]
+    assert [option["value"] for option in element["initial_options"]] == ["leo"]
+    # The flag is consumed rather than leaking into the prefilled prompt.
+    assert blocks["prompt_block"]["element"]["initial_value"] == "make it move"
+
+
+def _voice_submission_payload(voices, backend="grok"):
+    metadata = {
+        "response_url": "https://hooks.slack.example/dispatch",
+        "channel_id": "C123",
+        "channel_name": "general",
+        "user": "alice",
+        "mode": "video",
+    }
+    return {
+        "type": "view_submission",
+        "view": {
+            "callback_id": "ai_slop_upload",
+            "private_metadata": json.dumps(metadata),
+            "state": {
+                "values": {
+                    "prompt_block": {"prompt": {"value": "two hosts chat"}},
+                    "backend_block": {
+                        "backend": {"selected_option": {"value": backend}}
+                    },
+                    "duration_block": {"duration": {"value": "10"}},
+                    "reference_role_block": {
+                        "reference_role": {"selected_option": {"value": "reference"}}
+                    },
+                    "voices_block": {
+                        "voices": {
+                            "selected_options": [
+                                {"value": voice} for voice in voices
+                            ]
+                        }
+                    },
+                    "files_block": {"files": {"files": [{"id": "F123"}]}},
+                }
+            },
+        },
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_emits_voice_flags(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+    mock_sns.publish.return_value = {"MessageId": "abc"}
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_voice_submission_payload(["eve", "leo"])),
+        None,
+    )
+
+    assert response["statusCode"] == "200"
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    sns_msg = json.loads(inner["default"])
+    assert sns_msg["prompt"] == "-v 10 -b grok --voice eve --voice leo two hosts chat"
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_rejects_voices_on_gemini(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_voice_submission_payload(["eve"], backend="gemini")),
+        None,
+    )
+
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert "voices_block" in body["errors"]
+    mock_sns.publish.assert_not_called()

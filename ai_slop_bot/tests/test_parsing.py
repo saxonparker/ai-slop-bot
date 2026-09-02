@@ -405,3 +405,29 @@ def test_upload_flag_accepts_ios_smart_dash():
     result = parsing.parse_command("-i \u2014upload make something")
     assert result.upload_requested is True
     assert result.prompt_text == "make something"
+
+
+def test_voice_flag_collects_ids_lowercased():
+    result = parsing.parse_command("-v 8 --voice Eve --voice leo make them argue")
+    assert result.mode == "video"
+    assert result.voices == ["eve", "leo"]
+    assert result.prompt_text == "make them argue"
+
+
+def test_voice_flag_accepts_custom_voice_ids():
+    # xAI custom voices are 8-char lowercase alphanumeric and can start with a digit.
+    result = parsing.parse_command("-v --voice 7f3a9b2c narrate this")
+    assert result.voices == ["7f3a9b2c"]
+    assert result.prompt_text == "narrate this"
+
+
+def test_voice_flag_with_invalid_id_falls_back_to_prompt():
+    result = parsing.parse_command("-v --voice ??? hello")
+    assert result.voices == []
+    assert result.prompt_text == "--voice ??? hello"
+
+
+def test_voice_flag_without_value_falls_back_to_prompt():
+    result = parsing.parse_command("-v --voice")
+    assert result.voices == []
+    assert result.prompt_text == "--voice"

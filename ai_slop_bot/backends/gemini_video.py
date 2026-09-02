@@ -32,11 +32,14 @@ class GeminiProvider:
         source_image=None,
         references: list | None = None,
         *,
+        voices: list | None = None,
         video_op: str | None = None,
         video_url: str | None = None,
     ) -> GenerationResult:
         if video_op:
             raise ValueError("Edit/extend video is only supported on the grok backend; use -b grok.")
+        if voices:
+            raise ValueError("Voices are only supported on the grok backend; use -b grok.")
         if references:
             raise ValueError("Veo reference images are not supported by this backend yet; use -b grok.")
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])

@@ -196,6 +196,7 @@ def ai_slop_bot(event, context):
                     duration=parsed.video_duration,
                     source_image=source_image,
                     references=references,
+                    voices=parsed.voices,
                     video_op=parsed.video_op,
                     video_url=video_url,
                 ),
@@ -443,7 +444,7 @@ def _model_for_request(mode: str, backend: str) -> str:
     if mode == "video":
         defaults = {
             "gemini": "veo-3.1-fast-generate-preview",
-            "grok": "grok-imagine-video",
+            "grok": "grok-imagine-video-1.5",
         }
         return os.environ.get("VIDEO_MODEL", defaults.get(backend, ""))
     return ""

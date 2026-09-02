@@ -497,6 +497,7 @@ def test_video_start_image_is_resolved_and_passed_to_provider(
         duration=10,
         source_image=resolved,
         references=[],
+        voices=[],
         video_op=None,
         video_url=None,
     )
@@ -534,6 +535,7 @@ def test_video_edit_is_passed_to_provider_without_image_refs(
         duration=None,
         source_image=None,
         references=[],
+        voices=[],
         video_op="edit",
         video_url="https://example.com/source.mp4",
     )
@@ -596,6 +598,7 @@ def test_uploaded_source_video_is_uploaded_and_passed_to_provider(
         duration=12,
         source_image=None,
         references=[],
+        voices=[],
         video_op="edit",
         video_url="https://cdn.example/source.mp4",
     )

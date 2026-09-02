@@ -41,6 +41,7 @@ Flags can appear in any order unless a flag consumes the next value.
 - `--edit <image-url>` — edit an image from a URL; with `-i --edit` and no URL, open the upload modal for an uploaded image edit.
 - `--ref <image-url>` — add an image reference. Repeat for multiple references.
 - `--start <image-url>` — use an image URL as the start frame for a video.
+- `--voice <voice-id>` — add a preset voice to a Grok video. Repeat for up to 3 voices.
 - `--edit-video <video-url>` — edit an existing video (Grok only).
 - `--extend-video <video-url>` — extend a video from its last frame (Grok only).
 - `--report` (`-report` is also accepted) — admin-only balance report; the caller must be listed in `ADMIN_USERS`.
@@ -61,13 +62,14 @@ There are two ways to provide reference media for generated content:
   - `--edit <image-url>` for image edits.
   - `--ref <image-url>` for image or video style/content references.
   - `--start <image-url>` for a video start frame.
+  - `--voice <voice-id>` for a Grok video narration voice.
   - `--edit-video <video-url>` for Grok video edits from an existing video.
   - `--extend-video <video-url>` for Grok video extensions from the source video's last frame.
 - Use the Slack upload modal:
   - `/slop-bot -i --upload` opens an image prompt form with 1-3 uploaded references.
   - `/slop-bot -i --edit` opens the same form for editing an uploaded image.
   - `/slop-bot -i --edit make this watercolor` opens the form with the prompt pre-filled.
-  - `/slop-bot -v --upload` opens a video prompt form where image uploads can be a single start frame or loose references, and source video uploads can be used for edit/extend.
+  - `/slop-bot -v --upload` opens a video prompt form where image uploads can be a single start frame or loose references, source video uploads can be used for edit/extend, and up to 3 preset voices can be selected.
 
 Uploaded modal files are temporary. Slack stores them briefly, then the bot
 downloads and deletes them after it has normalized images or staged source
@@ -78,10 +80,34 @@ Backend support differs slightly:
 
 - Grok image and video support reference images.
 - Grok video supports `--edit-video` and `--extend-video` source-video operations.
+- Grok video supports up to 3 preset voices via `--voice`; Gemini video does not.
 - Gemini image supports reference images.
 - Gemini video supports one start image, but not loose references or video edit/extend operations.
 - OpenAI image uses the edit model when references are supplied.
 - Video edit/extend flags are Grok-only; use `-b grok` if `VIDEO_BACKEND` is not `grok`.
+
+### Video voices
+
+Grok video accepts up to 3 preset voices. Add them with `--voice <voice-id>`, or
+pick them from the `-v --upload` form, which offers `eve`, `ara`, `rex`, `sal`,
+and `leo`. The flag accepts any xAI voice id, so newer flagship voices work
+without a dispatch redeploy.
+
+xAI binds voices to speakers by `<AUDIO_0>`, `<AUDIO_1>`, and `<AUDIO_2>` tags in
+the prompt, so write them yourself to control who says what:
+
+```text
+/slop-bot -v --voice eve --voice leo the host with <AUDIO_0> interviews the guest with <AUDIO_1>
+```
+
+A prompt with no `<AUDIO_` tag gets one sentence appended naming the tags, so a
+bare `--voice eve` still produces narration.
+
+### Video resolution
+
+Grok video renders at 1080p by default, overridable with `VIDEO_RESOLUTION`.
+xAI caps reference-guided generation at 720p, so requests using reference images
+or voices are clamped to 720p automatically.
 
 ## Conversations
 
@@ -207,7 +233,7 @@ Two-Lambda architecture:
 | Image | gemini     | `gemini-3.1-flash-image`          |         |
 | Image | openai     | `dall-e-3`                        |         |
 | Image | grok       | `grok-imagine-image-quality`      | Yes     |
-| Video | grok       | `grok-imagine-video`              | Yes     |
+| Video | grok       | `grok-imagine-video-1.5`          | Yes     |
 | Video | gemini     | `veo-3.1-fast-generate-preview`   |         |
 
 ## Environment Variables
@@ -222,6 +248,7 @@ Two-Lambda architecture:
 | `IMAGE_MODEL` | backend default | Image model override for the selected image backend |
 | `VIDEO_MODEL` | backend default | Video model override for the selected video backend |
 | `VIDEO_DURATION` | Grok `10`, Gemini `8` | Default video length when `-v` does not include seconds |
+| `VIDEO_RESOLUTION` | `1080p` | Grok output resolution (`480p`, `720p`, `1080p`); clamped to `720p` when references or voices are used |
 | `ANTHROPIC_API_KEY` | — | Required if using anthropic backend |
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
 | `GROK_IMAGE_EDIT_TIMEOUT_SECONDS` | `180` | Timeout for Grok image edit requests |
@@ -293,7 +320,7 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
    - **Slash command** Request URL: `<base_url>/ai-slop`
      - Usage Hint:
        ```text
-       /slop-bot <prompt> | -i | -v [sec] | -c/--conversation | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -bufo/--bufo | -p | -u | -pay <amt>
+       /slop-bot <prompt> | -i | -v [sec] | -c/--conversation | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --voice <voice-id> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -bufo/--bufo | -p | -u | -pay <amt>
        ```
    - **Interactivity & Shortcuts** → Enable Interactivity
      - Request URL: `<base_url>/slack/interactions`

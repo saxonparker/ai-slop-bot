@@ -28,7 +28,7 @@ COST_PER_MILLION_TOKENS = {
 }
 
 COST_PER_VIDEO = {
-    "grok": 0.05,  # per second of video
+    "grok": 0.08,  # grok-imagine-video-1.5, per second of video
     "gemini": 0.10,  # Veo 3.1 Fast @ 720p, per second (incl. audio)
 }
 
@@ -252,7 +252,11 @@ def _get_table():
     return boto3.resource("dynamodb").Table(table_name)
 
 
-VIDEO_MODELS = {"grok-imagine-video", "veo-3.1-fast-generate-preview"}
+VIDEO_MODELS = {
+    "grok-imagine-video",
+    "grok-imagine-video-1.5",
+    "veo-3.1-fast-generate-preview",
+}
 
 
 def _is_video_model(model: str) -> bool:

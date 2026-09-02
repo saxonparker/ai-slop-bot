@@ -1,11 +1,15 @@
 """Flag parsing and directive syntax for /slop-bot commands."""
 
+import re
 import urllib.parse
 from dataclasses import dataclass, field
 
 import media_refs
 
 
+# Preset voices are words ("eve"); custom-voice ids are 8-char lowercase
+# alphanumeric and may start with a digit.
+_VOICE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _SMART_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 _DASH_TRANSLATION = str.maketrans({ch: "-" for ch in _SMART_DASHES})
 _LONG_FLAGS = {
@@ -20,6 +24,7 @@ _LONG_FLAGS = {
     "--extend-video",
     "--ref",
     "--start",
+    "--voice",
     "--credit",
     "--bufo",
 }
@@ -61,6 +66,7 @@ class ParsedCommand:
     upload_requested: bool = False
     source_image: media_refs.ReferenceImage | None = None
     reference_images: list[media_refs.ReferenceImage] = field(default_factory=list)
+    voices: list[str] = field(default_factory=list)
 
 
 def parse_command(input_str: str) -> ParsedCommand:
@@ -88,6 +94,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     upload_requested = False
     source_image = None
     reference_images = []
+    voices = []
 
     # Extract flags
     prompt_tokens = []
@@ -162,6 +169,17 @@ def parse_command(input_str: str) -> ParsedCommand:
                         source_image = reference
                     else:
                         reference_images.append(reference)
+            else:
+                prompt_tokens.append(token)
+        elif lower == "--voice":
+            if i + 1 < len(tokens):
+                i += 1
+                voice = tokens[i].lower().strip(",")
+                if _VOICE_ID.match(voice):
+                    voices.append(voice)
+                else:
+                    prompt_tokens.append(token)
+                    prompt_tokens.append(tokens[i])
             else:
                 prompt_tokens.append(token)
         elif lower in ("-credit", "--credit"):
@@ -260,4 +278,5 @@ def parse_command(input_str: str) -> ParsedCommand:
         upload_requested=upload_requested,
         source_image=source_image,
         reference_images=reference_images,
+        voices=voices,
     )

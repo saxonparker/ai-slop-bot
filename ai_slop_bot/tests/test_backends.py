@@ -579,7 +579,7 @@ def test_grok_video_generate(mock_requests):
     mock_status.json.return_value = {
         "status": "done",
         "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 8},
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
         "usage": {"cost_in_usd_ticks": 5600000000},
     }
     mock_status.raise_for_status = MagicMock()
@@ -598,8 +598,8 @@ def test_grok_video_generate(mock_requests):
     assert isinstance(result, GenerationResult)
     assert result.content == fake_bytes
     assert result.backend == "grok"
-    assert result.model == "grok-imagine-video"
-    assert result.cost_estimate == 8 * 0.05
+    assert result.model == "grok-imagine-video-1.5"
+    assert result.cost_estimate == 8 * 0.08
     assert result.cost_actual == 0.56
     assert result.cost_in_usd_ticks == 5600000000
     # Default duration (10) should be sent in request
@@ -620,7 +620,7 @@ def test_grok_video_edit(mock_requests):
     mock_status.json.return_value = {
         "status": "done",
         "video": {"url": "https://vidgen.x.ai/edit.mp4", "duration": 10},
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
     }
     mock_status.raise_for_status = MagicMock()
 
@@ -645,7 +645,7 @@ def test_grok_video_edit(mock_requests):
     post_args = mock_requests.post.call_args
     assert post_args.args[0].endswith("/videos/edits")
     assert post_args.kwargs["json"] == {
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
         "prompt": "add cinematic rain",
         "video": {"url": source_video_url},
         "duration": 10,
@@ -665,7 +665,7 @@ def test_grok_video_extend(mock_requests):
     mock_status.json.return_value = {
         "status": "done",
         "video": {"url": "https://vidgen.x.ai/extend.mp4", "duration": 10},
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
     }
     mock_status.raise_for_status = MagicMock()
 
@@ -690,7 +690,7 @@ def test_grok_video_extend(mock_requests):
     post_args = mock_requests.post.call_args
     assert post_args.args[0].endswith("/videos/extensions")
     assert post_args.kwargs["json"] == {
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
         "prompt": "continue the camera move",
         "video": {"url": source_video_url},
         "duration": 10,
@@ -710,7 +710,7 @@ def test_grok_video_custom_duration(mock_requests):
     mock_status.json.return_value = {
         "status": "done",
         "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": 5},
-        "model": "grok-imagine-video",
+        "model": "grok-imagine-video-1.5",
     }
     mock_status.raise_for_status = MagicMock()
 
@@ -723,7 +723,7 @@ def test_grok_video_custom_duration(mock_requests):
     with patch("backends.grok_video.time.sleep"):
         result = GrokProvider().generate("a dancing cat", duration=5)
 
-    assert result.cost_estimate == 5 * 0.05
+    assert result.cost_estimate == 5 * 0.08
     post_kwargs = mock_requests.post.call_args
     assert post_kwargs.kwargs["json"]["duration"] == 5
 
@@ -782,6 +782,104 @@ def test_grok_video_reference_payload(mock_requests):
         {"url": "https://example.com/a.jpg"},
         {"url": "https://example.com/b.jpg"},
     ]
+    # Reference-guided generation is capped below the model's native resolution.
+    assert payload["resolution"] == "720p"
+
+
+def _grok_video_mocks(mock_requests, duration=10):
+    """Wire up submit/poll/download mocks for a successful generation."""
+    mock_submit = MagicMock()
+    mock_submit.json.return_value = {"request_id": "req-res"}
+    mock_submit.raise_for_status = MagicMock()
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/video.mp4", "duration": duration},
+    }
+    mock_status.raise_for_status = MagicMock()
+    mock_requests.post.return_value = mock_submit
+    mock_requests.get.side_effect = [mock_status, MagicMock(content=b"vid")]
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_defaults_to_1080p(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate("a dancing cat")
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["model"] == "grok-imagine-video-1.5"
+    assert payload["resolution"] == "1080p"
+    assert result.model == "grok-imagine-video-1.5"
+
+
+@patch.dict(
+    "os.environ",
+    {"XAI_API_KEY": "fake-key", "VIDEO_RESOLUTION": "720p"},
+    clear=True,
+)
+@patch("backends.grok_video.requests")
+def test_grok_video_resolution_env_override(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("a dancing cat")
+
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == "720p"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_voices_become_reference_audios(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("two hosts chat", voices=["eve", "leo"])
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["reference_audios"] == [{"voice_id": "eve"}, {"voice_id": "leo"}]
+    # Voices only bind when tagged, so an untagged prompt gets tags appended.
+    assert payload["prompt"] == (
+        "two hosts chat The speakers use the voices from <AUDIO_0>, <AUDIO_1>."
+    )
+    # Voices are a reference feature, so they share the 720p cap.
+    assert payload["resolution"] == "720p"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_keeps_existing_audio_tags(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("the host with <AUDIO_0> greets you", voices=["eve"])
+
+    payload = mock_requests.post.call_args.kwargs["json"]
+    assert payload["prompt"] == "the host with <AUDIO_0> greets you"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_rejects_more_than_three_voices(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    with pytest.raises(ValueError, match="at most 3 voices"):
+        GrokProvider().generate("chatter", voices=["eve", "leo", "ara", "rex"])
+    mock_requests.post.assert_not_called()
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=True)
+def test_gemini_video_rejects_voices():
+    from backends.gemini_video import GeminiProvider
+
+    with pytest.raises(ValueError, match="only supported on the grok backend"):
+        GeminiProvider().generate("chatter", voices=["eve"])
 
 
 # ── chat() multi-turn ───────────────────────────────────────────────────────
@@ -954,7 +1052,7 @@ def test_grok_video_moderation_failure_is_classified(mock_requests):
     assert exc_info.value.error_type == "moderation"
     assert "flagged by content moderation" in exc_info.value.user_message
     assert exc_info.value.cost_actual == 0.05
-    assert exc_info.value.cost_estimate == 10 * 0.05
+    assert exc_info.value.cost_estimate == 10 * 0.08
 
 
 # ── Gemini Video (Veo) ───────────────────────────────────────────────────────
