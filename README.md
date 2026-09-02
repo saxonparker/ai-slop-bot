@@ -69,7 +69,7 @@ There are two ways to provide reference media for generated content:
   - `/slop-bot -i --upload` opens an image prompt form with 1-3 uploaded references.
   - `/slop-bot -i --edit` opens the same form for editing an uploaded image.
   - `/slop-bot -i --edit make this watercolor` opens the form with the prompt pre-filled.
-  - `/slop-bot -v --upload` opens a video prompt form where image uploads can be a single start frame or loose references, source video uploads can be used for edit/extend, and up to 3 preset voices can be selected.
+  - `/slop-bot -v --upload` opens a video prompt form where image uploads can be a single start frame or loose references, source video uploads can be used for edit/extend, and up to 3 built-in voices can be selected.
 
 Uploaded modal files are temporary. Slack stores them briefly, then the bot
 downloads and deletes them after it has normalized images or staged source
@@ -89,9 +89,9 @@ Backend support differs slightly:
 ### Video voices
 
 Grok video accepts up to 3 preset voices. Add them with `--voice <voice-id>`, or
-pick them from the `-v --upload` form, which offers `eve`, `ara`, `rex`, `sal`,
-and `leo`. The flag accepts any xAI voice id, so newer flagship voices work
-without a dispatch redeploy.
+pick them from the `-v --upload` form, which lists xAI's 28 built-in voices with
+their gender tag (`Eve (F)`, `Leo (M)`, ...). The flag accepts any voice id, so
+custom voices and any roster additions work without a dispatch redeploy.
 
 xAI binds voices to speakers by `<AUDIO_0>`, `<AUDIO_1>`, and `<AUDIO_2>` tags in
 the prompt, so write them yourself to control who says what:

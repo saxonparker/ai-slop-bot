@@ -63,7 +63,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
 *Video voices (Grok only):*
   `{CANONICAL_SLASH_COMMAND} -v --voice eve she pitches the product` — narrate with a preset voice
   `{CANONICAL_SLASH_COMMAND} -v --voice eve --voice leo they argue` — up to 3 voices; repeat the flag
-  Preset voices in the upload form: eve, ara, rex, sal, leo. `--voice` also accepts newer xAI voice ids.
+  The upload form lists xAI's 28 built-in voices (eve, leo, helix, luna, ...); `--voice` also accepts custom voice ids.
   Tag voices in the prompt as `<AUDIO_0>`, `<AUDIO_1>`, `<AUDIO_2>` to control who speaks;
   untagged prompts get the tags appended automatically.
   Voices and reference images render at 720p; everything else renders at 1080p.
@@ -106,9 +106,18 @@ _LONG_FLAGS = {
     "--bufo",
 }
 
-# Preset voice roster offered in the upload modal. The --voice flag accepts any
-# xAI voice id, so newer flagship voices work without redeploying dispatch.
-PRESET_VOICES = ("eve", "ara", "rex", "sal", "leo")
+# xAI's built-in voice roster, id -> gender label, offered in the upload modal.
+# The --voice flag accepts any voice id, so custom voices and any roster
+# additions work without redeploying dispatch.
+PRESET_VOICES = {
+    "altair": "M", "ara": "F", "atlas": "M", "aurora": "F",
+    "carina": "F", "castor": "M", "celeste": "F", "cosmo": "M",
+    "eve": "F", "helios": "M", "helix": "M", "iris": "F",
+    "kepler": "M", "leo": "M", "liora": "F", "lumen": "M",
+    "luna": "F", "lux": "M", "naksh": "M", "orion": "M",
+    "perseus": "M", "rex": "M", "rigel": "M", "sal": "M",
+    "sirius": "M", "ursa": "F", "zagan": "M", "zenith": "M",
+}
 MAX_VOICES = 3
 
 
@@ -581,6 +590,11 @@ def _upload_blocks(upload_options: dict) -> list[dict]:
     return blocks
 
 
+def _voice_option(voice: str) -> dict:
+    """Label a voice with xAI's gender tag, since 28 bare names are hard to pick from."""
+    return _option(f"{voice.title()} ({PRESET_VOICES[voice]})", voice)
+
+
 def _voice_block(selected: list) -> dict:
     """Optional voice picker for reference-to-video narration."""
     chosen = [voice for voice in selected if voice in PRESET_VOICES][:MAX_VOICES]
@@ -589,12 +603,10 @@ def _voice_block(selected: list) -> dict:
         "action_id": "voices",
         "max_selected_items": MAX_VOICES,
         "placeholder": {"type": "plain_text", "text": "No voice"},
-        "options": [_option(voice.title(), voice) for voice in PRESET_VOICES],
+        "options": [_voice_option(voice) for voice in PRESET_VOICES],
     }
     if chosen:
-        element["initial_options"] = [
-            _option(voice.title(), voice) for voice in chosen
-        ]
+        element["initial_options"] = [_voice_option(voice) for voice in chosen]
     return {
         "type": "input",
         "optional": True,

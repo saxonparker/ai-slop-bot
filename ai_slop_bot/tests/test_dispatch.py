@@ -706,9 +706,15 @@ def test_video_generate_modal_offers_voices(mock_boto, mock_urlopen):
     element = blocks["voices_block"]["element"]
     assert element["type"] == "multi_static_select"
     assert element["max_selected_items"] == 3
-    assert [option["value"] for option in element["options"]] == [
-        "eve", "ara", "rex", "sal", "leo",
-    ]
+    values = [option["value"] for option in element["options"]]
+    assert len(values) == 28
+    assert values == sorted(values)
+    assert {"eve", "leo", "helix", "zenith"} <= set(values)
+    # Slack caps a static select at 100 options.
+    assert len(values) <= 100
+    labels = {option["value"]: option["text"]["text"] for option in element["options"]}
+    assert labels["eve"] == "Eve (F)"
+    assert labels["leo"] == "Leo (M)"
 
 
 @patch.dict("os.environ", {
@@ -730,6 +736,7 @@ def test_video_upload_modal_prefills_voices_from_command(mock_boto, mock_urlopen
     blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
     element = blocks["voices_block"]["element"]
     assert [option["value"] for option in element["initial_options"]] == ["leo"]
+    assert element["initial_options"][0]["text"]["text"] == "Leo (M)"
     # The flag is consumed rather than leaking into the prefilled prompt.
     assert blocks["prompt_block"]["element"]["initial_value"] == "make it move"
 
