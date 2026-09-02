@@ -129,7 +129,9 @@ def _xai_error_message(exc: Exception) -> str:
 def classify_xai_error(exc: Exception, backend_label: str = "Grok") -> tuple[str, str]:
     """Classify a Grok/xAI SDK or HTTP error into (error_type, user_message).
 
-    Keys off HTTP status first (401/403/429 are unambiguous). xAI does not
+    Keys off HTTP status first (401/403/429 are unambiguous). 401 and 403 are
+    kept apart: 401 is a bad key, but 403 is a valid key without entitlement
+    to a gated feature, and conflating them sends admins after the wrong thing. xAI does not
     document a stable error-code enum for chat/image endpoints, so 400/422
     falls back to matching the message text — but distinguishes a genuine
     content rejection ("content moderated") from the moderation checker
@@ -140,9 +142,18 @@ def classify_xai_error(exc: Exception, backend_label: str = "Grok") -> tuple[str
     message = _xai_error_message(exc)
     lower = message.lower()
 
-    if status in (401, 403):
+    if status == 401:
         return "auth", (
             f"{backend_label}'s API key looks invalid or expired — an admin needs to check it."
+        )
+    if status == 403:
+        # The key authenticated fine; the account just isn't entitled to what
+        # was asked for. Gated features (custom voices, partner-only models)
+        # land here, so don't send an admin chasing the key.
+        return "forbidden", (
+            f"{backend_label} accepted the API key but refused this request — the account "
+            "doesn't have access to something it used. Gated features like custom voices "
+            "need to be enabled by xAI."
         )
     if status == 429:
         return "rate_limit", (
@@ -192,8 +203,9 @@ def classify_xai_video_failure(data: dict, backend_label: str = "Grok") -> tuple
             f"{backend_label} rejected the video request as malformed: {message[:200]}"
         )
     if code == "permission_denied":
-        return "auth", (
-            f"{backend_label}'s API key looks invalid or lacks access — an admin needs to check it."
+        return "forbidden", (
+            f"{backend_label} refused this video request — the account doesn't have access "
+            "to something it used. Gated features like custom voices need to be enabled by xAI."
         )
     if code == "failed_precondition":
         return "invalid_request", f"{backend_label} rejected the video request: {message[:200]}"

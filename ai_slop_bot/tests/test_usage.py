@@ -107,6 +107,16 @@ def test_classify_xai_error_auth():
     assert "API key" in message
 
 
+def test_classify_xai_error_forbidden_is_not_reported_as_a_bad_key():
+    # 403 means the key authenticated but the account lacks entitlement, which
+    # is what a gated feature like custom voices returns.
+    exc = SimpleNamespace(status_code=403, body=None, response=None, payload=None)
+    error_type, message = classify_xai_error(exc)
+    assert error_type == "forbidden"
+    assert "doesn't have access" in message
+    assert "invalid or expired" not in message
+
+
 def test_classify_xai_error_rate_limit():
     exc = SimpleNamespace(status_code=429, body=None, response=None, payload=None)
     error_type, message = classify_xai_error(exc)
@@ -173,8 +183,10 @@ def test_classify_xai_video_failure_invalid_argument_non_moderation():
 def test_classify_xai_video_failure_permission_denied():
     data = {"status": "failed", "error": {"code": "permission_denied", "message": "nope"}}
     error_type, message = classify_xai_video_failure(data)
-    assert error_type == "auth"
-    assert "API key" in message
+    assert error_type == "forbidden"
+    assert "doesn't have access" in message
+    # A gated feature is not a key problem; don't send an admin after the key.
+    assert "API key" not in message
 
 
 def test_classify_xai_video_failure_service_unavailable():
