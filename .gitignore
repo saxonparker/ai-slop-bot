@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 *.egg-info/
 node_modules/
+gallery/config.json
 
 # Terraform
 terraform/.terraform/

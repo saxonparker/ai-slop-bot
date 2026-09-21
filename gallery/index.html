@@ -223,6 +223,33 @@
             color: #fff;
         }
 
+        .badge-hall { top: auto; bottom: 8px; left: auto; right: 8px; background: #f4c76b; color: #302008; }
+        .trophy { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
+        .filter-pill[data-filter="hall-of-fame"].active { background: #44351c; color: #f4c76b; }
+        .hall-button {
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 8px 10px;
+            background: #202020;
+            color: #ccc;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+        }
+        .hall-button[aria-pressed="true"] { border-color: #8b6c32; color: #f4c76b; }
+        .hall-button:hover:not(:disabled) { background: #353024; color: #ffe2a0; }
+        .hall-button:disabled { opacity: 0.5; cursor: wait; }
+        button:focus-visible { outline: 2px solid #f4c76b; outline-offset: 3px; }
+        .card-actions { padding: 0 12px 12px; }
+        .hall-intro, .hall-status {
+            max-width: 1400px; margin: 0 auto; padding: 0 20px 20px;
+            color: #aaa; font-size: 14px; line-height: 1.5;
+        }
+        .hall-intro strong { color: #f4c76b; }
+        .hall-status:empty { display: none; }
+        .hall-status.error { color: #f2aa9f; }
+        .modal-actions { margin-top: 12px; }
+
         /* Loading / empty states */
         .status-message {
             text-align: center;
@@ -406,6 +433,12 @@
             .modal-prev { left: 4px; }
             .modal-next { right: 4px; }
             .modal-nav { width: 36px; height: 36px; font-size: 18px; }
+            .filter-pill { padding: 8px 10px; flex: 1; }
+            .controls-right, .search-container { flex-wrap: wrap; }
+            .search-container { width: 100%; }
+            .search-input { width: 100%; }
+            #searchPrompt { flex-basis: 100%; }
+            .modal-body img, .modal-body video { max-height: 60vh !important; }
         }
     </style>
 </head>
@@ -420,6 +453,7 @@
             <button class="filter-pill active" data-filter="all" onclick="setFilter('all')">All</button>
             <button class="filter-pill" data-filter="photo" onclick="setFilter('photo')">Photos</button>
             <button class="filter-pill" data-filter="video" onclick="setFilter('video')">Videos</button>
+            <button class="filter-pill" data-filter="hall-of-fame" onclick="setFilter('hall-of-fame')"><svg class="trophy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8m-4-7v7M7 3h10v6a5 5 0 0 1-10 0V3ZM7 5H4v3a4 4 0 0 0 4 4m9-7h3v3a4 4 0 0 1-4 4"/></svg>Hall of Fame</button>
         </div>
 
         <div class="controls-right">
@@ -439,6 +473,12 @@
         </div>
     </div>
 
+    <div id="hallIntro" class="hall-intro" hidden>
+        <strong>The best of the slop.</strong> Picked by everyone. Add your favorites with the trophy button.
+        Removing an item here keeps it in the full gallery.
+    </div>
+    <div class="hall-status" id="hallStatus" role="status" aria-live="polite"></div>
+    <div class="hall-status" id="hallRetry" hidden><button class="hall-button" onclick="loadHallOfFame()">Retry Hall of Fame</button></div>
     <div id="grid" class="media-grid"></div>
 
     <div id="pagination" class="pagination" style="display:none;"></div>
@@ -450,6 +490,7 @@
             <div id="modalMedia"></div>
             <div id="modalTitle" class="modal-title"></div>
             <div id="modalMeta" class="modal-meta"></div>
+            <div id="modalActions" class="modal-actions"></div>
         </div>
         <button class="modal-nav modal-next" onclick="navigateModal(1)">&rsaquo;</button>
     </div>
@@ -458,6 +499,7 @@
     var BUCKET = 'dallepics';
     var CLOUDFRONT = 'https://d2jagmvo7k5q5j.cloudfront.net';
     var VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm'];
+    var TROPHY = '<svg class="trophy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8m-4-7v7M7 3h10v6a5 5 0 0 1-10 0V3ZM7 5H4v3a4 4 0 0 0 4 4m9-7h3v3a4 4 0 0 1-4 4"/></svg>';
 
     AWS.config.region = 'us-east-2';
     AWS.config.credentials = new AWS.CognitoIdentityCredentials({
@@ -467,10 +509,96 @@
 
     var allItems = [];
     var filteredItems = [];
-    var currentFilter = 'all';
+    var currentFilter = location.hash === '#hall-of-fame' ? 'hall-of-fame' : 'all';
     var currentPage = 1;
     var perPage = 48;
     var modalIndex = -1;
+    var hallKeys = new Set();
+    var hallPending = new Set();
+    var hallUrl = '';
+    var hallReady = false;
+    var hallLoading = false;
+    var galleryLoaded = false;
+
+    function hallStatus(message, error) {
+        var el = document.getElementById('hallStatus');
+        el.textContent = message;
+        el.classList.toggle('error', !!error);
+    }
+
+    async function loadHallOfFame() {
+        if (hallLoading || hallPending.size) return;
+        hallLoading = true;
+        hallStatus('Loading Hall of Fame...');
+        document.getElementById('hallRetry').hidden = true;
+        refreshHallControls();
+        try {
+            if (!hallUrl) {
+                var configResponse = await fetch('config.json', {cache: 'no-store', signal: AbortSignal.timeout(15000)});
+                if (!configResponse.ok) throw new Error('Missing gallery configuration');
+                var config = await configResponse.json();
+                if (!config.hallOfFameUrl) throw new Error('Missing Hall of Fame URL');
+                hallUrl = config.hallOfFameUrl;
+            }
+            var response = await fetch(hallUrl, {cache: 'no-store', signal: AbortSignal.timeout(15000)});
+            if (!response.ok) throw new Error('Could not load selections');
+            var data = await response.json();
+            if (!Array.isArray(data.keys)) throw new Error('Invalid selections');
+            hallKeys = new Set(data.keys);
+            hallReady = true;
+            hallStatus('');
+        } catch (error) {
+            hallReady = false;
+            hallStatus('Hall of Fame could not load. You can still browse the gallery.', true);
+            document.getElementById('hallRetry').hidden = false;
+        } finally {
+            hallLoading = false;
+            refreshHallControls();
+        }
+    }
+
+    function hallButton(item, index, inModal) {
+        var featured = hallKeys.has(item.key);
+        var disabled = !hallReady || hallLoading || hallPending.has(item.key);
+        var label = hallPending.has(item.key) ? 'Saving...' :
+            featured ? TROPHY + 'Remove from Hall of Fame' : TROPHY + 'Add to Hall of Fame';
+        return '<button class="hall-button" aria-pressed="' + featured + '" ' +
+            (disabled ? 'disabled ' : '') + 'onclick="event.stopPropagation(); toggleHallOfFame(' +
+            (inModal ? 'modalIndex' : index) + ')">' + label + '</button>';
+    }
+
+    function refreshHallControls() {
+        if (!galleryLoaded) return;
+        updateStats();
+        applyFilters();
+    }
+
+    async function toggleHallOfFame(index) {
+        var item = filteredItems[index];
+        if (!item || !hallReady || hallLoading || hallPending.has(item.key)) return;
+        var featured = !hallKeys.has(item.key);
+        hallPending.add(item.key);
+        refreshHallControls();
+        hallStatus('Saving Hall of Fame...');
+        try {
+            var response = await fetch(hallUrl, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({key: item.key, featured: featured}),
+                signal: AbortSignal.timeout(15000)
+            });
+            if (!response.ok) throw new Error('Save failed');
+            var data = await response.json();
+            if (data.key !== item.key || data.featured !== featured) throw new Error('Invalid save result');
+            if (featured) hallKeys.add(item.key);
+            else hallKeys.delete(item.key);
+            hallStatus(featured ? 'Added to Hall of Fame.' : 'Removed from Hall of Fame. Still available in All.');
+        } catch (error) {
+            hallStatus('Could not save that change. Please try again.', true);
+        } finally {
+            hallPending.delete(item.key);
+            refreshHallControls();
+        }
+    }
 
     function isVideo(key) {
         var lower = key.toLowerCase();
@@ -541,6 +669,7 @@
                     fetchPage(data.NextContinuationToken);
                 } else {
                     allItems.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
+                    galleryLoaded = true;
                     updateStats();
                     loadManifest(function() {
                         populateDropdowns();
@@ -557,16 +686,24 @@
         var photos = allItems.filter(function(i) { return i.type === 'photo'; }).length;
         var videos = allItems.filter(function(i) { return i.type === 'video'; }).length;
         document.getElementById('statsLine').textContent =
-            photos + ' photos, ' + videos + ' videos';
+            photos + ' photos, ' + videos + ' videos' + (hallReady ?
+                ' · ' + allItems.filter(function(item) { return hallKeys.has(item.key); }).length + ' in Hall of Fame' : '');
     }
 
     function setFilter(filter) {
         currentFilter = filter;
-        document.querySelectorAll('.filter-pill').forEach(function(pill) {
-            pill.classList.toggle('active', pill.dataset.filter === filter);
-        });
+        history.replaceState(null, '', location.pathname + location.search + (filter === 'hall-of-fame' ? '#hall-of-fame' : ''));
+        syncFilterControls();
         currentPage = 1;
         applyFilters();
+    }
+
+    function syncFilterControls() {
+        document.querySelectorAll('.filter-pill').forEach(function(pill) {
+            pill.classList.toggle('active', pill.dataset.filter === currentFilter);
+            pill.setAttribute('aria-pressed', pill.dataset.filter === currentFilter);
+        });
+        document.getElementById('hallIntro').hidden = currentFilter !== 'hall-of-fame';
     }
 
     function populateDropdowns() {
@@ -593,11 +730,15 @@
     }
 
     function applyFilters() {
+        var modalItem = filteredItems[modalIndex];
+        var oldModalIndex = modalIndex;
         var prompt = document.getElementById('searchPrompt').value.toLowerCase().trim();
         var user = document.getElementById('searchUser').value;
         var channel = document.getElementById('searchChannel').value;
         filteredItems = allItems.filter(function(item) {
-            if (currentFilter !== 'all' && item.type !== currentFilter) return false;
+            if (currentFilter === 'hall-of-fame') {
+                if (!hallReady || !hallKeys.has(item.key)) return false;
+            } else if (currentFilter !== 'all' && item.type !== currentFilter) return false;
             if (prompt && !item.title.toLowerCase().includes(prompt)) return false;
             if (user || channel) {
                 var meta = getItemMeta(item);
@@ -606,7 +747,17 @@
             }
             return true;
         });
+        currentPage = Math.min(currentPage, Math.max(1, Math.ceil(filteredItems.length / perPage)));
         render();
+        if (modalItem) {
+            modalIndex = filteredItems.findIndex(function(item) { return item.key === modalItem.key; });
+            if (modalIndex < 0) {
+                if (filteredItems.length) openModal(Math.min(oldModalIndex, filteredItems.length - 1));
+                else closeModal();
+            } else {
+                document.getElementById('modalActions').innerHTML = hallButton(modalItem, modalIndex, true);
+            }
+        }
     }
 
     function render() {
@@ -615,28 +766,42 @@
         var page = filteredItems.slice(start, start + perPage);
 
         if (filteredItems.length === 0) {
-            grid.innerHTML = '<div class="status-message" style="grid-column:1/-1">No results found.</div>';
+            var emptyMessage = 'No results found.';
+            if (currentFilter === 'hall-of-fame') {
+                if (hallLoading) emptyMessage = 'Loading Hall of Fame...';
+                else if (!hallReady) emptyMessage = 'Hall of Fame is unavailable. Use Retry above to load it.';
+                else if (!allItems.some(function(item) { return hallKeys.has(item.key); })) {
+                    emptyMessage = 'No Hall of Fame picks yet. Find a favorite in All, Photos, or Videos and click its trophy button.';
+                }
+            }
+            grid.innerHTML = '<div class="status-message" style="grid-column:1/-1">' + emptyMessage + '</div>';
             document.getElementById('pagination').style.display = 'none';
             return;
         }
 
         grid.innerHTML = page.map(function(item, i) {
             var globalIdx = start + i;
+            var badge = hallKeys.has(item.key) ? '<span class="media-badge badge-hall">' + TROPHY + 'Hall of Fame</span>' : '';
+            var actions = '<div class="card-actions">' + hallButton(item, globalIdx, false) + '</div>';
             if (item.type === 'video') {
                 return '<div class="media-item" onclick="openModal(' + globalIdx + ')">' +
                     '<div class="thumb-container">' +
                         '<video src="' + item.url + '" preload="metadata" muted></video>' +
                         '<span class="media-badge badge-video">Video</span>' +
+                        badge +
                         '<div class="play-overlay"><div class="play-icon"></div></div>' +
                     '</div>' +
                     '<div class="media-title">' + escapeHtml(item.title) + '</div>' +
+                    actions +
                 '</div>';
             }
             return '<div class="media-item" onclick="openModal(' + globalIdx + ')">' +
                 '<div class="thumb-container">' +
                     '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=status-message>Failed to load</div>\'">' +
+                    badge +
                 '</div>' +
                 '<div class="media-title">' + escapeHtml(item.title) + '</div>' +
+                actions +
             '</div>';
         }).join('');
 
@@ -688,6 +853,7 @@
     function openModal(idx) {
         modalIndex = idx;
         var item = filteredItems[idx];
+        if (!item) return;
         var mediaEl = document.getElementById('modalMedia');
         if (item.type === 'video') {
             mediaEl.innerHTML = '<video src="' + item.url + '" controls autoplay style="max-width:90vw;max-height:80vh;border-radius:6px;"></video>';
@@ -702,6 +868,7 @@
         if (meta.channel) parts.push('#' + meta.channel);
         if (meta.model) parts.push(meta.model);
         metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
+        document.getElementById('modalActions').innerHTML = hallButton(item, idx, true);
         document.getElementById('modal').classList.add('open');
         document.body.style.overflow = 'hidden';
     }
@@ -723,13 +890,13 @@
     function escapeHtml(str) {
         var div = document.createElement('div');
         div.textContent = str;
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function showLoading(msg) {
         document.getElementById('grid').innerHTML =
             '<div class="status-message" style="grid-column:1/-1">' +
-            '<div class="spinner"></div>' + msg + '</div>';
+            '<div class="spinner"></div>' + escapeHtml(msg) + '</div>';
     }
 
     // Event listeners
@@ -751,7 +918,13 @@
         if (e.key === 'ArrowRight') navigateModal(1);
     });
 
+    window.addEventListener('focus', loadHallOfFame);
+    window.addEventListener('hashchange', function() {
+        setFilter(location.hash === '#hall-of-fame' ? 'hall-of-fame' : 'all');
+    });
+    syncFilterControls();
     loadGallery();
+    loadHallOfFame();
     </script>
 </body>
 </html>

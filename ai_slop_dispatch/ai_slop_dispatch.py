@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 
 import boto3
+import hall_of_fame
 
 
 CANONICAL_SLASH_COMMAND = "/slop-bot"
@@ -44,6 +45,10 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -pay-test <amount>` or `{CANONICAL_SLASH_COMMAND} --pay-test <amount>` — test PayPal Sandbox; no real money or credits
   `{CANONICAL_SLASH_COMMAND} --report` (`-report` also works) — admin-only balance report; requires `ADMIN_USERS`
   `{CANONICAL_SLASH_COMMAND} --credit <user> <amount>` (`-credit` also works) — admin-only credit adjustment; requires `ADMIN_USERS`
+
+*Hall of Fame:*
+  Use a generated message's *… → Add to Hall of Fame* shortcut to save a favorite.
+  Anyone with the gallery link can add or remove picks in its *Hall of Fame* tab.
 
 *Flags can be combined:*
   `{CANONICAL_SLASH_COMMAND} -p -i a beautiful sunset` — potato mode image
@@ -142,6 +147,8 @@ def _normalize_flag_token(token: str) -> str:
 def dispatch(event, _):
     """Entry point for the dispatch Lambda. Routes by HTTP path."""
     try:
+        if event.get("path") == hall_of_fame.API_PATH:
+            return hall_of_fame.handle_http(event)
         if not _valid_slack_signature(event):
             return {"statusCode": 401, "body": "Invalid Slack signature."}
         path = event.get("path") or ""
@@ -219,6 +226,13 @@ def _handle_interaction(event):
         return _json_response("missing interaction payload")
 
     payload = json.loads(raw_payload)
+    if payload.get("type") == "message_action" and payload.get("callback_id") == "hall_of_fame_add":
+        _publish({
+            "source": "hall_of_fame_shortcut",
+            "slack_message": payload.get("message") or {},
+            "response_url": payload["response_url"],
+        })
+        return _json_payload({})
     if payload.get("type") == "block_actions":
         return _handle_block_action(payload)
     if payload.get("type") != "view_submission":
@@ -236,6 +250,16 @@ def _handle_interaction(event):
 
 def _handle_block_action(payload: dict):
     """Update the upload modal when a stateful select changes."""
+    for action in payload.get("actions") or []:
+        if action.get("action_id") in ("hall_of_fame_add", "hall_of_fame_remove"):
+            key = hall_of_fame.validate_key(action.get("value"))
+            _publish({
+                "source": "hall_of_fame",
+                "media_key": key,
+                "featured": action["action_id"] == "hall_of_fame_add",
+                "response_url": payload["response_url"],
+            })
+            return _json_payload({})
     view = payload.get("view") or {}
     if view.get("callback_id") != "ai_slop_upload":
         return _json_payload({})

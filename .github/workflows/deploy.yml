@@ -31,11 +31,12 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Test checkout in Chromium
+      - name: Test checkout and gallery in Chromium
         run: |
           npm ci
           npx playwright install --with-deps chromium
           npm run test:checkout
+          npm run test:gallery
 
   build:
     needs: test
@@ -139,5 +140,7 @@ jobs:
           TF_VAR_paypal_live_enabled: ${{ vars.PAYPAL_LIVE_ENABLED || 'false' }}
 
       - name: Deploy gallery to S3
-        working-directory: gallery
-        run: aws s3 cp index.html s3://dallepics/index.html --content-type "text/html"
+        run: |
+          terraform output -json gallery_config > ../gallery/config.json
+          aws s3 cp ../gallery/config.json s3://dallepics/config.json --content-type "application/json" --cache-control "no-cache"
+          aws s3 cp ../gallery/index.html s3://dallepics/index.html --content-type "text/html" --cache-control "no-cache"

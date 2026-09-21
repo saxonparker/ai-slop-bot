@@ -239,6 +239,48 @@ renders images and videos through the CloudFront distribution, and reads
 photo/video filtering, prompt search, user/channel filters, pagination, and a
 modal viewer.
 
+The **Hall of Fame** tab collects community favorites. Anyone with the gallery
+link can use the trophy control on a photo or video to add it, or remove it
+directly from Hall of Fame (including in the modal viewer). Removal only
+changes the selection; the original remains in All/Photos/Videos. Search and
+user/channel filters also work inside Hall of Fame. Link directly to it with
+`https://d2jagmvo7k5q5j.cloudfront.net/index.html#hall-of-fame`.
+
+In Slack, use a generated message's **… → Add to Hall of Fame** shortcut.
+Normal generation posts have no extra buttons or messages. The shortcut sends
+a private confirmation with an undo button. Existing image posts work; videos
+uploaded after this feature is deployed are linked by their Slack file ID.
+Older videos can be selected on the website. Messages containing multiple
+gallery items also direct you to the website to choose the right one.
+
+Configure the Slack shortcut once under **Interactivity & Shortcuts → Create
+New Shortcut → On messages**:
+
+- Name: `Add to Hall of Fame`
+- Description: `Save a generated photo or video to the gallery's Hall of Fame`
+- Callback ID: `hall_of_fame_add`
+- Use the existing interactivity Request URL (`terraform output -raw slack_interactions_url`).
+- Keep the existing `commands` scope (already required by `/slop-bot`).
+
+See [Slack's message shortcut setup](https://docs.slack.dev/interactivity/implementing-shortcuts/).
+
+Terraform creates `ai-slop-hall-of-fame` (one row per selected media key) and
+`ai-slop-gallery-media` (Slack video file ID → gallery key). The dispatch Lambda
+serves public `GET`/`PUT /gallery/hall-of-fame`; Slack requests retain their normal
+signature verification and asynchronous processing. Curation intentionally
+requires no website login. Writes validate media keys and verify that newly
+featured files exist in S3. No browser S3 write permissions are needed.
+
+The deploy workflow publishes `gallery/config.json` from Terraform's
+`gallery_config` output, then publishes the gallery HTML. Manual deployments
+must publish both files. This configuration contains only the public API URL.
+The website refreshes selections on load and when you return to its window;
+failed reads/saves show an error without silently changing membership.
+
+Run browser coverage with `npm ci`, `npx playwright install chromium`, and
+`npm run test:gallery`. Backend/Slack coverage runs with the usual
+`cd ai_slop_bot && pytest tests/`.
+
 Generated images and videos uploaded through `image_upload.upload_to_s3()` use
 the `dalle/` prefix and update the manifest when user/channel/model metadata is
 present. Temporary source videos for edit/extend workflows use the

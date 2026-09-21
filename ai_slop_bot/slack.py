@@ -4,6 +4,7 @@ import json
 import os
 
 import requests
+import hall_of_fame
 
 
 def post_text_response(response_url: str, user: str, display: str, response: str,
@@ -228,9 +229,39 @@ def post_image_response_in_thread(channel_id: str, user: str, display: str,
         raise RuntimeError(f"Slack chat.postMessage (image) failed: {data.get('error')}")
 
 
+def hall_of_fame_action(key: str, featured: bool = True) -> dict:
+    """Use explicit add/remove actions so old Slack messages stay safe to click."""
+    return {
+        "type": "actions",
+        "elements": [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": (
+                "🏆 Add to Hall of Fame" if featured else "Remove from Hall of Fame"
+            )},
+            "action_id": "hall_of_fame_add" if featured else "hall_of_fame_remove",
+            "value": key,
+        }],
+    }
+
+
+def post_hall_of_fame_result(response_url: str, selection: dict):
+    """Confirm privately with an undo button, preserving the generated post."""
+    text = "Added to Hall of Fame." if selection["featured"] else "Removed from Hall of Fame."
+    resp = requests.post(response_url, json={
+        "response_type": "ephemeral", "replace_original": False, "text": text,
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": (
+                f"{text} <{hall_of_fame.GALLERY_URL}|View Hall of Fame>"
+            )}},
+            hall_of_fame_action(selection["key"], not selection["featured"]),
+        ],
+    }, timeout=30)
+    resp.raise_for_status()
+
+
 def post_video_response(channel_id: str, user: str, display: str, video_bytes: bytes,
-                        thread_ts: str | None = None):
-    """Upload a video to Slack and post it to the channel (or a thread)."""
+                        thread_ts: str | None = None) -> str:
+    """Upload a video, post it to the channel/thread, and return its Slack file ID."""
     token = os.environ["SLACK_BOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
     filename = display[:100].replace(" ", "_") + ".mp4"
@@ -276,6 +307,7 @@ def post_video_response(channel_id: str, user: str, display: str, video_bytes: b
     if not complete_data.get("ok"):
         raise RuntimeError(f"Slack completeUploadExternal failed: {complete_data.get('error')}")
     print(f"SLACK UPLOAD: shared to channel {channel_id}")
+    return file_id
 
 
 def get_user_display_name(user_id: str) -> str:
@@ -316,7 +348,7 @@ def post_ephemeral(response_url: str, text: str = "", blocks: list[dict] | None 
     """Post a message only visible to the requesting user."""
     if blocks is None:
         blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
-    payload = {"response_type": "ephemeral", "blocks": blocks}
+    payload = {"response_type": "ephemeral", "replace_original": False, "blocks": blocks}
     if text:
         payload["text"] = text
     requests.post(response_url, data=json.dumps(payload), timeout=10000)

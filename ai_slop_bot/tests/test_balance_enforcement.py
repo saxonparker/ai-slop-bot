@@ -74,6 +74,14 @@ def existing_conversation():
     )
 
 
+def test_video_generation_links_slack_file_to_gallery_for_message_shortcut(bot, monkeypatch):
+    monkeypatch.setenv("HALL_OF_FAME_TABLE_NAME", "test-hall")
+    bot.slack.post_video_response.return_value = "F123"
+    with patch("ai_slop_bot.hall_of_fame.register_slack_file") as register:
+        invoke("-v a surfing dog")
+    register.assert_called_once_with("F123", "https://example.com/result")
+
+
 @pytest.mark.parametrize("balance", [10.0, 0.0, -4.99, -5.0, -5.01, -9.99])
 @pytest.mark.parametrize("mode,flag", [("text", ""), ("image", "-i"), ("video", "-v")])
 def test_generation_thresholds(bot, balance, mode, flag):

@@ -10,6 +10,7 @@ import traceback
 import budget
 import bufo
 import conversations
+import hall_of_fame
 import image_upload
 import media_refs
 import model_config
@@ -36,12 +37,30 @@ def ai_slop_bot(event, context):
         print(f"SNS MESSAGE: {event['Records'][0]['Sns']['Message']}")
         message = json.loads(event["Records"][0]["Sns"]["Message"])
         response_url = message.get("response_url", "")
+        source = message.get("source", "slash")
+        if source in ("hall_of_fame", "hall_of_fame_shortcut"):
+            try:
+                if message["source"] == "hall_of_fame_shortcut":
+                    key = hall_of_fame.key_from_slack_message(message["slack_message"])
+                    if key is None:
+                        slack.post_ephemeral(response_url,
+                            "Choose a generated photo or video. If this is an older video or a message "
+                            f"with multiple items, add it from the <{hall_of_fame.CLOUDFRONT}/index.html|gallery>.")
+                        return
+                    selection = hall_of_fame.set_featured(key, True)
+                else:
+                    selection = hall_of_fame.set_featured(message["media_key"], message["featured"])
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"HALL OF FAME ERROR: {exc}")
+                slack.post_ephemeral(response_url, "Could not save that Hall of Fame change. Please try again.")
+                return
+            slack.post_hall_of_fame_result(response_url, selection)
+            return
         input_str = message["prompt"]
         user = message["user"]
         channel_id = message.get("channel_id", "")
         channel_name = message.get("channel_name", "")
         thread_ts = message.get("thread_ts", "") or ""
-        source = message.get("source", "slash")
 
         if source == "event_mention":
             event_user_id = message.get("event_user_id", "") or user
@@ -271,12 +290,17 @@ def ai_slop_bot(event, context):
             )
             usage.record_usage(user, result)
             print("GENERATE VIDEO COMPLETE")
-            image_upload.upload_to_s3(prompt, result.content, extension="mp4",
-                                     user=user, channel=channel_name,
-                                     model=result.model)
+            video_url = image_upload.upload_to_s3(prompt, result.content, extension="mp4",
+                                                 user=user, channel=channel_name,
+                                                 model=result.model)
             video_thread_ts = thread_ts if source == "event_mention" else None
-            slack.post_video_response(channel_id, user, parsed.display_text,
-                                      result.content, thread_ts=video_thread_ts)
+            slack_file_id = slack.post_video_response(channel_id, user, parsed.display_text,
+                                                      result.content, thread_ts=video_thread_ts)
+            if hall_of_fame.is_enabled():
+                try:
+                    hall_of_fame.register_slack_file(slack_file_id, video_url)
+                except Exception as exc:  # pylint: disable=broad-except
+                    print(f"SLACK VIDEO GALLERY LINK ERROR: {exc}")
             return
 
         if parsed.mode == "image":
@@ -402,7 +426,9 @@ def _notify(text, *, source, response_url, channel_id, thread_ts):
 def _post_error_safe(text, *, source, response_url, channel_id, thread_ts):
     """Best-effort error post — never raises into the caller."""
     try:
-        if source == "event_mention" and channel_id and thread_ts:
+        if source in ("hall_of_fame", "hall_of_fame_shortcut") and response_url:
+            slack.post_ephemeral(response_url, "Could not confirm the Hall of Fame change. Please check the gallery.")
+        elif source == "event_mention" and channel_id and thread_ts:
             slack.post_thread_notice(channel_id, thread_ts, text)
         elif response_url:
             slack.post_error(response_url, text)

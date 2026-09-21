@@ -1,6 +1,13 @@
 resource "aws_apigatewayv2_api" "ai_slop" {
   name          = "ai-slop-api"
   protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_origins = ["https://d2jagmvo7k5q5j.cloudfront.net"]
+    allow_methods = ["GET", "PUT", "OPTIONS"]
+    allow_headers = ["content-type"]
+    max_age       = 3600
+  }
 }
 
 resource "aws_apigatewayv2_stage" "prod" {

@@ -102,6 +102,7 @@ resource "aws_lambda_function" "dispatch" {
   environment {
     variables = {
       AI_SLOP_SNS_TOPIC        = aws_sns_topic.ai_slop.arn
+      HALL_OF_FAME_TABLE_NAME  = aws_dynamodb_table.hall_of_fame.name
       SLACK_BOT_TOKEN          = var.slack_bot_token
       SLACK_SIGNING_SECRET     = var.slack_signing_secret
       SLACK_SIGNATURE_REQUIRED = tostring(var.paypal_live_enabled)
@@ -136,6 +137,8 @@ resource "aws_lambda_function" "bot" {
       USAGE_TABLE_NAME                = aws_dynamodb_table.usage.name
       LEDGER_TABLE_NAME               = aws_dynamodb_table.ledger.name
       CONVERSATIONS_TABLE_NAME        = aws_dynamodb_table.conversations.name
+      HALL_OF_FAME_TABLE_NAME         = aws_dynamodb_table.hall_of_fame.name
+      GALLERY_MEDIA_TABLE_NAME        = aws_dynamodb_table.gallery_media.name
       CONVERSATION_MAX_CHARS          = "200000"
       VENMO_USERNAME                  = var.venmo_username
       ADMIN_USERS                     = var.admin_users
