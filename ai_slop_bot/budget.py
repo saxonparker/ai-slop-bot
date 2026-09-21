@@ -75,11 +75,16 @@ def get_balance(user: str) -> float:
 
 def get_payment_required_message(balance: float) -> str:
     """Explain the generation cutoff and the existing credit purchase flow."""
+    payment_step = (
+        "complete the PayPal or Venmo checkout. Credits are added after payment is confirmed."
+        if os.environ.get("PAYMENTS_ENABLED") == "true"
+        else "follow the returned Venmo link to pay Saxon."
+    )
     return (
         f":no_entry: Pay Saxon money. Your balance is *${balance:.2f}*, "
         "so generation is paused.\n"
         "To get credits, run `/slop-bot -pay <amount>` (for example, "
-        "`/slop-bot -pay 10`), then follow the returned Venmo link to pay Saxon.\n"
+        f"`/slop-bot -pay 10`), then {payment_step}\n"
         "Check your balance with `/slop-bot -u`. "
         f"Generation resumes above ${GENERATION_CUTOFF_BALANCE:.2f}; "
         f"your own prompts resume above ${PROMPT_OVERRIDE_BALANCE:.2f}."

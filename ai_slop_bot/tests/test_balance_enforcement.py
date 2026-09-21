@@ -16,7 +16,8 @@ from usage import GenerationResult
 
 
 @pytest.fixture
-def bot():
+def bot(monkeypatch):
+    monkeypatch.delenv("PAYMENTS_ENABLED", raising=False)
     targets = {
         "balance": ("budget.get_balance", 0.0),
         "record": ("usage.record_usage", None),
@@ -190,10 +191,12 @@ def test_conversation_uses_requesters_balance_and_saves_effective_prompt(bot, ba
         assert bot.create_conv.call_args.kwargs["first_user_msg"] == current
 
 
-@pytest.mark.parametrize("command", ["-pay 20", "-u", "-g", "--report", "--credit bob 20"])
+@pytest.mark.parametrize("command", ["-pay 20", "-pay-test 20", "-u", "-g", "--report", "--credit bob 20"])
 def test_account_commands_remain_available_below_cutoff(bot, command):
     bot.balance.return_value = -50.0
     with patch("ai_slop_bot.budget.add_credit", return_value=-30.0) as credit, \
+         patch("ai_slop_bot.payments.create_live_checkout") as checkout, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout", return_value="https://example.com/payments/sandbox/checkout#token") as sandbox, \
          patch("ai_slop_bot.budget.get_balance_display", return_value="Balance: $-50.00"), \
          patch("ai_slop_bot.budget.get_all_balances", return_value="report"), \
          patch("ai_slop_bot.budget.ADMIN_USERS", {"bob"}), \
@@ -201,12 +204,113 @@ def test_account_commands_remain_available_below_cutoff(bot, command):
         invoke(command)
         if command == "-pay 20":
             credit.assert_called_once_with("bob", 20.0, source_user="bob", note="Venmo payment")
+            checkout.assert_not_called()
+            sandbox.assert_not_called()
             assert "Venmo" in bot.slack.post_ephemeral.call_args.args[-1]
+        if command == "-pay-test 20":
+            credit.assert_not_called()
+            checkout.assert_not_called()
+            sandbox.assert_called_once_with("bob", 20.0)
+            assert "Sandbox test" in bot.slack.post_ephemeral.call_args.args[-1]
         if command == "--credit bob 20":
             credit.assert_called_once_with("bob", 20.0, source_user="bob", note="Admin adjustment")
     bot.slack.post_ephemeral.assert_called_once()
     bot.balance.assert_not_called()
     assert bot.providers.mock_calls == []
+
+
+@pytest.mark.parametrize("command", ["-pay", "-pay notanumber", "-pay-test", "-pay-test notanumber"])
+def test_invalid_payment_is_not_sent_to_a_model(bot, command):
+    invoke(command)
+    assert bot.providers.mock_calls == []
+    assert "<amount>" in bot.slack.post_ephemeral.call_args.args[-1]
+
+
+def test_live_payment_failure_never_falls_back_to_immediate_credit(bot, monkeypatch):
+    monkeypatch.setenv("PAYMENTS_ENABLED", "true")
+    with patch("ai_slop_bot.payments.create_live_checkout", side_effect=ValueError("Payments are not enabled yet.")), \
+         patch("ai_slop_bot.budget.add_credit") as credit:
+        invoke("-pay 10")
+    credit.assert_not_called()
+    assert "not enabled" in bot.slack.post_ephemeral.call_args.args[-1]
+    assert bot.providers.mock_calls == []
+
+
+@pytest.mark.parametrize("enabled", [None, "false"])
+@pytest.mark.parametrize("amount", ["10", "0.50", "600"])
+def test_regular_pay_preserves_existing_venmo_flow(bot, monkeypatch, enabled, amount):
+    if enabled is not None:
+        monkeypatch.setenv("PAYMENTS_ENABLED", enabled)
+    with patch("ai_slop_bot.budget.add_credit", return_value=10) as credit, \
+         patch("ai_slop_bot.payments.create_live_checkout") as live, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout") as sandbox:
+        invoke(f"-pay {amount}")
+    credit.assert_called_once_with("bob", float(amount), source_user="bob", note="Venmo payment")
+    live.assert_not_called()
+    sandbox.assert_not_called()
+    response = bot.slack.post_ephemeral.call_args.args[-1]
+    assert "Credited" in response and "https://venmo.com/" in response
+
+
+def test_explicit_live_switch_uses_verified_checkout(bot, monkeypatch):
+    monkeypatch.setenv("PAYMENTS_ENABLED", "true")
+    with patch("ai_slop_bot.budget.add_credit") as credit, \
+         patch("ai_slop_bot.payments.create_live_checkout", return_value="https://test/payments/live/checkout#token") as live, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout") as sandbox:
+        invoke("-pay 10")
+    live.assert_called_once_with("bob", 10)
+    sandbox.assert_not_called()
+    credit.assert_not_called()
+    assert "after payment is confirmed" in bot.slack.post_ephemeral.call_args.args[-1]
+
+
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_test_flag_always_uses_sandbox_and_never_adds_real_credits(bot, monkeypatch, enabled):
+    monkeypatch.setenv("PAYMENTS_ENABLED", enabled)
+    with patch("ai_slop_bot.budget.add_credit") as credit, \
+         patch("ai_slop_bot.payments.create_live_checkout") as live, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout", return_value="https://test/payments/sandbox/checkout#token") as sandbox:
+        invoke("-pay-test 10")
+    sandbox.assert_called_once_with("bob", 10)
+    live.assert_not_called()
+    credit.assert_not_called()
+    assert "real balance is unchanged" in bot.slack.post_ephemeral.call_args.args[-1]
+
+
+def test_sandbox_failure_leaves_regular_pay_working(bot):
+    with patch("ai_slop_bot.budget.add_credit", return_value=10) as credit, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout", side_effect=ValueError("Sandbox is not ready")), \
+         patch("ai_slop_bot.payments.create_live_checkout") as live:
+        invoke("-pay-test 10")
+        credit.assert_not_called()
+        invoke("-pay 10")
+    credit.assert_called_once_with("bob", 10.0, source_user="bob", note="Venmo payment")
+    live.assert_not_called()
+    assert "Credited" in bot.slack.post_ephemeral.call_args.args[-1]
+
+
+@pytest.mark.parametrize("command", ["-pay 10 -pay-test 10", "-pay-test 10 -pay 10"])
+def test_mixed_payment_flags_cannot_credit_live_balance(bot, command):
+    with patch("ai_slop_bot.budget.add_credit") as credit, \
+         patch("ai_slop_bot.payments.create_sandbox_checkout") as sandbox, \
+         patch("ai_slop_bot.payments.create_live_checkout") as live:
+        invoke(command)
+    credit.assert_not_called()
+    sandbox.assert_not_called()
+    live.assert_not_called()
+    assert "separate commands" in bot.slack.post_ephemeral.call_args.args[-1]
+
+
+@pytest.mark.parametrize("command", ["--credit alice 500", "--report"])
+def test_mention_display_name_cannot_authorize_admin_commands(bot, command):
+    bot.slack.get_user_display_name.return_value = "saxon"
+    with patch("ai_slop_bot.budget.ADMIN_USERS", {"saxon"}), \
+         patch("ai_slop_bot.budget.add_credit") as credit, \
+         patch("ai_slop_bot.budget.get_all_balances") as report:
+        invoke(command, source="event_mention", user="UATTACKER")
+    credit.assert_not_called()
+    report.assert_not_called()
+    assert "slash command" in bot.slack.post_thread_notice.call_args.args[-1]
 
 
 def test_balance_is_checked_again_after_credits_are_added(bot):

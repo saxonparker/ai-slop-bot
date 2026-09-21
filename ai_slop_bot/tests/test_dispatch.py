@@ -1,14 +1,72 @@
 """Tests for the dispatch Lambda: thread_ts propagation and HELP_TEXT."""
 
 import json
+import base64
+import hashlib
+import hmac
 from pathlib import Path
 import sys
 from unittest.mock import MagicMock, patch
 import urllib.parse
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ai_slop_dispatch"))
 
 import ai_slop_dispatch  # noqa: E402  pylint: disable=wrong-import-position
+
+
+def test_help_distinguishes_sandbox_payments():
+    assert "-pay <amount>" in ai_slop_dispatch.HELP_TEXT
+    assert "-pay-test <amount>" in ai_slop_dispatch.HELP_TEXT
+    assert "no real money or credits" in ai_slop_dispatch.HELP_TEXT
+
+
+@pytest.mark.parametrize("path", ["/ai-slop", "/slack/events", "/slack/interactions"])
+@pytest.mark.parametrize("encoded", [False, True])
+def test_signed_slack_request_authenticates_before_routing(monkeypatch, path, encoded):
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-secret")
+    body = '{"text":"--credit alice 10"}'
+    timestamp = "1000000"
+    signature = "v0=" + hmac.new(b"test-secret", f"v0:{timestamp}:{body}".encode(), hashlib.sha256).hexdigest()
+    event = {
+        "path": path, "body": base64.b64encode(body.encode()).decode() if encoded else body,
+        "isBase64Encoded": encoded,
+        "headers": {"X-Slack-Request-Timestamp": timestamp, "X-Slack-Signature": signature},
+    }
+    route = {"/ai-slop": "_handle_slash_command", "/slack/events": "_handle_event",
+             "/slack/interactions": "_handle_interaction"}[path]
+    with patch("ai_slop_dispatch.time.time", return_value=1000000), \
+            patch("ai_slop_dispatch." + route, return_value={"statusCode": 200}) as handler:
+        assert ai_slop_dispatch.dispatch(event, None)["statusCode"] == 200
+    handler.assert_called_once_with(event)
+
+
+@pytest.mark.parametrize("tamper", ["body", "signature", "old", "future", "missing"])
+def test_forged_or_stale_credit_commands_are_rejected(monkeypatch, tamper):
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-secret")
+    body = "text=--credit+alice+10&user_name=saxon"
+    timestamp = "999000" if tamper == "old" else "1001000" if tamper == "future" else "1000000"
+    signature = "v0=" + hmac.new(b"test-secret", f"v0:{timestamp}:{body}".encode(), hashlib.sha256).hexdigest()
+    event = {"body": body, "headers": {
+        "x-slack-request-timestamp": timestamp, "x-slack-signature": signature,
+    }}
+    if tamper == "body":
+        event["body"] += "0"
+    elif tamper == "signature":
+        event["headers"]["x-slack-signature"] = "v0=forged"
+    elif tamper == "missing":
+        event["headers"] = {}
+    with patch("ai_slop_dispatch.time.time", return_value=1000000), \
+            patch("ai_slop_dispatch._publish") as publish:
+        assert ai_slop_dispatch.dispatch(event, None)["statusCode"] == 401
+    publish.assert_not_called()
+
+
+def test_live_enforcement_fails_closed_if_signing_secret_is_missing(monkeypatch):
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("SLACK_SIGNATURE_REQUIRED", "true")
+    assert ai_slop_dispatch.dispatch({"body": "text=--credit+alice+10&user_name=saxon"}, None)["statusCode"] == 401
 
 
 def _slack_event(text: str, user="alice", channel_id="C123",

@@ -51,8 +51,8 @@ resource "aws_iam_role_policy" "bot_s3" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:PutObject", "s3:GetObject"]
+      Effect = "Allow"
+      Action = ["s3:PutObject", "s3:GetObject"]
       Resource = [
         "arn:aws:s3:::dallepics/dalle/*",
         "arn:aws:s3:::dallepics/source-videos/*",
@@ -87,11 +87,11 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
 # ── Lambda Functions ─────────────────────────────────────────────────────────
 
 resource "aws_lambda_function" "dispatch" {
-  function_name    = "ai-slop-dispatch"
-  role             = aws_iam_role.dispatch.arn
-  handler          = "ai_slop_dispatch.dispatch"
-  runtime          = "python3.12"
-  timeout          = 10
+  function_name = "ai-slop-dispatch"
+  role          = aws_iam_role.dispatch.arn
+  handler       = "ai_slop_dispatch.dispatch"
+  runtime       = "python3.12"
+  timeout       = 10
   # CPU scales with memory; 128 MB starved the cold start past Slack's 3s
   # slash-command ACK deadline. 512 MB ~4x the CPU and is still ~free at
   # this invocation volume.
@@ -101,8 +101,10 @@ resource "aws_lambda_function" "dispatch" {
 
   environment {
     variables = {
-      AI_SLOP_SNS_TOPIC = aws_sns_topic.ai_slop.arn
-      SLACK_BOT_TOKEN   = var.slack_bot_token
+      AI_SLOP_SNS_TOPIC        = aws_sns_topic.ai_slop.arn
+      SLACK_BOT_TOKEN          = var.slack_bot_token
+      SLACK_SIGNING_SECRET     = var.slack_signing_secret
+      SLACK_SIGNATURE_REQUIRED = tostring(var.paypal_live_enabled)
     }
   }
 }
@@ -137,6 +139,16 @@ resource "aws_lambda_function" "bot" {
       CONVERSATION_MAX_CHARS          = "200000"
       VENMO_USERNAME                  = var.venmo_username
       ADMIN_USERS                     = var.admin_users
+      PAYPAL_ENVIRONMENT              = "live"
+      PAYMENTS_TABLE_NAME             = module.payments.table_name
+      PAYMENTS_BASE_URL               = module.payments.base_url
+      PAYMENTS_ENABLED                = tostring(var.paypal_live_enabled)
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !var.paypal_live_enabled || var.slack_signing_secret != ""
+      error_message = "Live payments require SLACK_SIGNING_SECRET to authenticate credit recipients and admin commands."
     }
   }
 }

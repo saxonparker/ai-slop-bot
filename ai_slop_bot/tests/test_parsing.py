@@ -200,6 +200,28 @@ def test_pay_invalid_amount():
     assert "notanumber" in result.prompt_text
 
 
+def test_sandbox_payment_flag_is_separate_from_regular_pay():
+    for flag in ("-pay-test", "--pay-test", "—pay-test"):
+        result = parsing.parse_command(f"{flag} 10")
+        assert result.pay_test_amount == 10
+        assert result.pay_amount is None
+        assert result.pay_error is None
+        assert result.prompt_text == ""
+
+
+def test_pay_flags_cannot_be_combined():
+    for command in ("-pay 10 -pay-test 5", "-pay-test 5 -pay 10"):
+        assert "separate commands" in parsing.parse_command(command).pay_error
+
+
+def test_invalid_test_payment_has_no_regular_pay_amount():
+    for command in ("-pay-test", "-pay-test nope"):
+        result = parsing.parse_command(command)
+        assert result.pay_amount is None
+        assert result.pay_test_amount is None
+        assert "-pay-test <amount>" in result.pay_error
+
+
 # ── Credit flag ─────────────────────────────────────────────────────────────
 
 def test_credit_user_amount():

@@ -9,9 +9,12 @@ Two routes are served from the same Lambda:
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import time
 import traceback
 import urllib.parse
 import urllib.request
@@ -37,7 +40,8 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
   `{CANONICAL_SLASH_COMMAND} -u` or `{CANONICAL_SLASH_COMMAND} --usage` — show your usage stats and credit balance
   `{CANONICAL_SLASH_COMMAND} -g` or `{CANONICAL_SLASH_COMMAND} --gallery` — show the AI Slop Gallery link
-  `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — add credits and receive a Venmo payment link
+  `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — get credits and payment instructions
+  `{CANONICAL_SLASH_COMMAND} -pay-test <amount>` or `{CANONICAL_SLASH_COMMAND} --pay-test <amount>` — test PayPal Sandbox; no real money or credits
   `{CANONICAL_SLASH_COMMAND} --report` (`-report` also works) — admin-only balance report; requires `ADMIN_USERS`
   `{CANONICAL_SLASH_COMMAND} --credit <user> <amount>` (`-credit` also works) — admin-only credit adjustment; requires `ADMIN_USERS`
 
@@ -94,6 +98,7 @@ _LONG_FLAGS = {
     "--report",
     "--gallery",
     "--pay",
+    "--pay-test",
     "--conversation",
     "--upload",
     "--edit",
@@ -137,7 +142,8 @@ def _normalize_flag_token(token: str) -> str:
 def dispatch(event, _):
     """Entry point for the dispatch Lambda. Routes by HTTP path."""
     try:
-        print(event)
+        if not _valid_slack_signature(event):
+            return {"statusCode": 401, "body": "Invalid Slack signature."}
         path = event.get("path") or ""
         if path.endswith("/slack/events"):
             return _handle_event(event)
@@ -152,11 +158,29 @@ def dispatch(event, _):
     # pylint: enable=broad-except
 
 
+def _valid_slack_signature(event):
+    """Authenticate callers before trusting usernames or admin credit commands."""
+    secret = os.environ.get("SLACK_SIGNING_SECRET")
+    if not secret:
+        # Terraform prevents enabling live payments without this credential.
+        return os.environ.get("SLACK_SIGNATURE_REQUIRED") != "true"
+    headers = {key.lower(): value for key, value in (event.get("headers") or {}).items()}
+    timestamp = headers.get("x-slack-request-timestamp", "")
+    try:
+        if abs(time.time() - int(timestamp)) > 300:
+            return False
+        body = _decode_body(event)
+    except (ValueError, TypeError):
+        return False
+    base = f"v0:{timestamp}:{body}".encode("utf-8")
+    signature = "v0=" + hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, headers.get("x-slack-signature", ""))
+
+
 def _handle_slash_command(event):
     """Slack slash-command payload posted to the /ai-slop route."""
     body = _decode_body(event)
     params = dict(urllib.parse.parse_qsl(body))
-    print(params)
     if "text" not in params or not params["text"]:
         return _json_response(HELP_TEXT)
     prompt = params["text"]

@@ -36,7 +36,8 @@ Flags can appear in any order unless a flag consumes the next value.
 - `-b <backend>` — override the backend for the selected mode.
 - `-u`, `--usage` — show your usage stats and credit balance.
 - `-g`, `--gallery` — show the AI Slop Gallery link.
-- `-pay <amount>`, `--pay <amount>` — add credits and receive a Venmo payment link.
+- `-pay <amount>`, `--pay <amount>` — keep the existing immediate credit and Venmo payment link until live PayPal is explicitly enabled.
+- `-pay-test <amount>`, `--pay-test <amount>` — test the new PayPal checkout in Sandbox; no real money or spendable credits.
 - `--upload` — open the Slack upload modal; combine with `-i` or `-v`.
 - `--edit <image-url>` — edit an image from a URL; with `-i --edit` and no URL, open the upload modal for an uploaded image edit.
 - `--ref <image-url>` — add an image reference. Repeat for multiple references.
@@ -151,10 +152,21 @@ Credits live in the DynamoDB ledger table named by `LEDGER_TABLE_NAME`
 `ai-slop-usage`) and use actual billed cost when available, otherwise the
 stored estimate.
 
-`/slop-bot -pay <amount>` records a ledger payment credit for the caller and
-returns a Venmo payment link generated from `VENMO_USERNAME` (default:
-`Saxon-Parker`). The link is a convenience deep link; the bot records the credit
-when the command is accepted and does not verify Venmo settlement.
+`/slop-bot -pay <amount>` preserves the existing flow by default: it immediately
+records the credit and returns a Venmo payment link. Deploying the new checkout
+code or setting up Sandbox does not switch real payments to PayPal.
+
+Use `/slop-bot -pay-test 10` to exercise the new checkout through the separate
+sandbox Lambda. Test payments only credit `ai-slop-ledger-sandbox`; they never
+change the user's spendable balance. If Sandbox is unavailable, the test command
+reports that and regular `-pay` continues to work.
+
+After testing, explicitly setting the GitHub variable `PAYPAL_LIVE_ENABLED=true`
+and deploying switches `-pay` to verified PayPal/Venmo checkout for $1–$500 USD.
+Credits then require a completed capture matching the purchase, amount, and
+currency, and duplicate captures/webhooks cannot credit it twice. A checkout
+failure after that switch never falls back to immediate credit. See
+[PayPal setup and sandbox testing](docs/paypal.md).
 
 `/slop-bot -u` shows the caller's usage summary plus their current balance. The
 balance display includes the latest ledger entry amount/date when one exists.
@@ -167,7 +179,7 @@ Before each generation, the bot checks the requesting user's balance:
   overrides emoji, bufo, and potato modes too.
 - At or below -$10, generation is blocked without calling a provider. The reply
   explains how to add credits with `/slop-bot -pay <amount>` and pay through the
-  returned Venmo link.
+  returned payment link (Venmo by default, verified checkout after the live switch).
 
 These limits also apply to uploaded media requests and each participant's
 conversation turns. Usage, payment, gallery, and authorized admin commands
@@ -314,7 +326,7 @@ is promotional through at least November 21, 2026; recheck rates on later review
 | `CONVERSATION_MAX_CHARS` | `200000` | Maximum stored transcript characters per conversation |
 | `ASSISTANT_RESERVE_CHARS` | `16000` | Reserved transcript headroom before accepting a continuation turn |
 | `CONVERSATION_MAX_TURNS` | `100` | Maximum user/assistant turns per conversation |
-| `VENMO_USERNAME` | `Saxon-Parker` | Venmo username used in generated payment links |
+| `VENMO_USERNAME` | `Saxon-Parker` | Venmo username for the existing -pay flow; verified checkout uses the configured PayPal merchant account |
 | `ADMIN_USERS` | `saxon` | Comma-separated Slack usernames allowed to use budget admin commands |
 | `REFERENCE_IMAGE_MAX_BYTES` | `20971520` | Maximum reference image size before normalization |
 | `REFERENCE_IMAGE_MAX_EDGE` | `2048` | Maximum reference image width or height after normalization |

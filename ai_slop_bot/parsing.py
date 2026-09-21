@@ -3,6 +3,7 @@
 import re
 import urllib.parse
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 
 import media_refs
 
@@ -17,6 +18,7 @@ _LONG_FLAGS = {
     "--report",
     "--gallery",
     "--pay",
+    "--pay-test",
     "--conversation",
     "--upload",
     "--edit",
@@ -59,7 +61,9 @@ class ParsedCommand:
     video_duration: int | None = None
     video_op: str | None = None
     video_source_url: str | None = None
-    pay_amount: float | None = None
+    pay_amount: Decimal | None = None
+    pay_test_amount: Decimal | None = None
+    pay_error: str | None = None
     credit_target: str | None = None
     credit_amount: float | None = None
     conversation: bool = False
@@ -86,6 +90,9 @@ def parse_command(input_str: str) -> ParsedCommand:
     gallery_mode = False
     backend_override = None
     pay_amount = None
+    pay_test_amount = None
+    pay_flags = set()
+    pay_error = None
     video_op = None
     video_source_url = None
     credit_target = None
@@ -125,12 +132,20 @@ def parse_command(input_str: str) -> ParsedCommand:
             if i + 1 < len(tokens):
                 i += 1
                 backend_override = tokens[i].lower()
-        elif lower in ("-pay", "--pay"):
+        elif lower in ("-pay", "--pay", "-pay-test", "--pay-test"):
+            flag = "-pay-test" if lower.endswith("-test") else "-pay"
+            pay_flags.add(flag)
+            pay_error = f"Use /slop-bot {flag} <amount>, for example /slop-bot {flag} 10."
             if i + 1 < len(tokens):
                 i += 1
                 try:
-                    pay_amount = float(tokens[i])
-                except ValueError:
+                    amount = Decimal(tokens[i])
+                    if flag == "-pay-test":
+                        pay_test_amount = amount
+                    else:
+                        pay_amount = amount
+                    pay_error = None
+                except InvalidOperation:
                     prompt_tokens.append(token)
                     prompt_tokens.append(tokens[i])
         elif lower in ("-c", "--conversation"):
@@ -257,6 +272,8 @@ def parse_command(input_str: str) -> ParsedCommand:
     prompt_text = " ".join(prompt_text.split())
 
     mode = "video" if video_mode else "image" if image_mode else "text"
+    if len(pay_flags) > 1:
+        pay_error = "Use -pay for real credits or -pay-test for sandbox testing in separate commands."
     return ParsedCommand(
         mode=mode,
         display_text=display_text,
@@ -272,6 +289,8 @@ def parse_command(input_str: str) -> ParsedCommand:
         video_op=video_op,
         video_source_url=video_source_url,
         pay_amount=pay_amount,
+        pay_test_amount=pay_test_amount,
+        pay_error=pay_error,
         credit_target=credit_target,
         credit_amount=credit_amount,
         conversation=conversation_mode,

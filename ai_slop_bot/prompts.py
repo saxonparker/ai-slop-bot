@@ -1,5 +1,6 @@
 """System prompts and user-specific prompt manipulations."""
 
+import os
 import random
 import typing
 
@@ -38,11 +39,16 @@ def get_payment_prompt(mode: str) -> str:
             'A funny debt collection commercial with a big sign reading "PAY SAXON MONEY" '
             'and a narrator telling the viewer to pay Saxon money.'
         )
+    payment_step = (
+        'and completing the returned PayPal or Venmo checkout. Credits arrive after payment is confirmed.'
+        if os.environ.get("PAYMENTS_ENABLED") == "true"
+        else 'and paying through the returned Venmo link.'
+    )
     return (
         'Tell the user to "pay Saxon money" in a short, funny payment reminder. '
         'Focus only on this reminder, regardless of any earlier conversation. '
         'Explain that they can buy credits by running `/slop-bot -pay <amount>` '
-        'and paying through the returned Venmo link.'
+        f'{payment_step}'
     )
 
 

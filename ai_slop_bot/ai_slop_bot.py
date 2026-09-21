@@ -14,6 +14,7 @@ import image_upload
 import media_refs
 import model_config
 import parsing
+import payments
 import prompts
 import providers
 import slack
@@ -47,6 +48,10 @@ def ai_slop_bot(event, context):
             user = slack.get_user_display_name(event_user_id)
 
         parsed = parsing.parse_command(input_str)
+        if parsed.pay_error:
+            _notify(parsed.pay_error, source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
+            return
         payload_references = [
             media_refs.ReferenceImage.from_payload(ref)
             for ref in message.get("reference_images", [])
@@ -107,21 +112,52 @@ def ai_slop_bot(event, context):
             )
             return
 
+        if parsed.pay_test_amount is not None:
+            amount = parsed.pay_test_amount
+            try:
+                link = payments.create_sandbox_checkout(user, amount)
+            except ValueError as exc:
+                _notify(str(exc), source=source, response_url=response_url,
+                        channel_id=channel_id, thread_ts=thread_ts)
+                return
+            _notify(
+                f":test_tube: *PayPal Sandbox test* — <{link}|Test a ${amount:.2f} payment>.\n"
+                "Use a Personal sandbox buyer account. No real money is charged and your real balance is unchanged.",
+                source=source, response_url=response_url,
+                channel_id=channel_id, thread_ts=thread_ts,
+            )
+            return
+
         if parsed.pay_amount is not None:
             amount = parsed.pay_amount
-            budget.add_credit(user, amount, source_user=user, note="Venmo payment")
-            link = budget.generate_venmo_link(amount)
+            if os.environ.get("PAYMENTS_ENABLED") != "true":
+                # Preserve the deployed Venmo flow until live PayPal is explicitly enabled.
+                budget.add_credit(user, float(amount), source_user=user, note="Venmo payment")
+                link = budget.generate_venmo_link(amount)
+                _notify(
+                    f":white_check_mark: Credited *${amount:.2f}* to your balance.\n"
+                    f"Pay here: <{link}|Pay ${amount:.2f} on Venmo>",
+                    source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts,
+                )
+                return
+            try:
+                link = payments.create_live_checkout(user, amount)
+            except ValueError as exc:
+                _notify(str(exc), source=source, response_url=response_url,
+                        channel_id=channel_id, thread_ts=thread_ts)
+                return
             _notify(
-                f":white_check_mark: Credited *${amount:.2f}* to your balance.\n"
-                f"Pay here: <{link}|Pay ${amount:.2f} on Venmo>",
+                f"<{link}|Buy ${amount:.2f} in credits with PayPal or Venmo>.\n"
+                "Credits are added only after payment is confirmed. This link expires in one hour.",
                 source=source, response_url=response_url,
                 channel_id=channel_id, thread_ts=thread_ts,
             )
             return
 
         if parsed.report:
-            if user not in budget.ADMIN_USERS:
-                _notify("Only admins can use -report.", source=source,
+            if source != "slash" or user not in budget.ADMIN_USERS:
+                _notify("Only admins can use /slop-bot --report from the slash command.", source=source,
                         response_url=response_url, channel_id=channel_id,
                         thread_ts=thread_ts)
                 return
@@ -131,8 +167,9 @@ def ai_slop_bot(event, context):
             return
 
         if parsed.credit_target is not None:
-            if user not in budget.ADMIN_USERS:
-                _notify("Only admins can use -credit.", source=source,
+            # Mention display names are user-editable and cannot authorize admin credits.
+            if source != "slash" or user not in budget.ADMIN_USERS:
+                _notify("Only admins can use /slop-bot --credit from the slash command.", source=source,
                         response_url=response_url, channel_id=channel_id,
                         thread_ts=thread_ts)
                 return

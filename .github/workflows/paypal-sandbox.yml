@@ -1,0 +1,112 @@
+name: Test PayPal Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_user:
+        description: Name in the sandbox ledger (never the real ledger)
+        default: sandbox-tester
+        required: true
+      amount:
+        description: Test purchase in USD
+        default: "10.00"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paypal-sandbox
+  cancel-in-progress: false
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_client_id: ${{ secrets.PAYPAL_SANDBOX_CLIENT_ID }}
+      TF_VAR_client_secret: ${{ secrets.PAYPAL_SANDBOX_CLIENT_SECRET }}
+      TF_VAR_webhook_id: ${{ secrets.PAYPAL_SANDBOX_WEBHOOK_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test payment verification
+        working-directory: ai_slop_bot
+        run: |
+          pip install requests boto3 pytest
+          pytest tests/test_payments.py -v
+      - name: Check sandbox credentials
+        working-directory: ai_slop_bot
+        env:
+          PAYPAL_ENVIRONMENT: sandbox
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_SANDBOX_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_SANDBOX_CLIENT_SECRET }}
+        run: |
+          python -c 'from paypal_api import PayPal; PayPal().request("GET", "/v1/notifications/webhooks"); print("Sandbox authentication passed")'
+      - name: Build payment Lambda
+        working-directory: ai_slop_bot
+        run: |
+          mkdir payment-build
+          pip install requests --target payment-build
+          cp payments.py paypal_api.py payment_handler.py checkout.html payment-build/
+          cd payment-build
+          zip -qr ../payments.zip .
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+      - name: Deploy isolated sandbox
+        working-directory: terraform/paypal-sandbox
+        run: |
+          terraform init -input=false
+          terraform validate
+          terraform plan -input=false -out=sandbox.plan
+          terraform apply -input=false sandbox.plan
+          terraform output -raw webhook_url > webhook-url.txt
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          url = Path("webhook-url.txt").read_text()
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write(f"Sandbox webhook URL: `{url}`\n\n")
+              if not os.environ.get("TF_VAR_webhook_id"):
+                  out.write("In your Sandbox PayPal app, add this webhook for "
+                            "`CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.COMPLETED`. "
+                            "Save its ID as `PAYPAL_SANDBOX_WEBHOOK_ID`, then rerun this workflow.\n")
+          PY
+      - name: Create test checkout
+        if: env.TF_VAR_webhook_id != ''
+        env:
+          TEST_USER: ${{ inputs.test_user }}
+          TEST_AMOUNT: ${{ inputs.amount }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path("sandbox-payload.json").write_text(json.dumps({
+              "action": "create_test_checkout", "user": os.environ["TEST_USER"],
+              "amount": os.environ["TEST_AMOUNT"],
+          }))
+          PY
+          aws lambda invoke --function-name ai-slop-payments-sandbox \
+            --cli-binary-format raw-in-base64-out --payload file://sandbox-payload.json sandbox-response.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          response = json.loads(Path("sandbox-response.json").read_text())
+          if response.get("statusCode") != 200:
+              raise SystemExit("Could not create sandbox checkout; check the payment Lambda configuration.")
+          url = json.loads(response["body"])["url"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write(f"[Open test checkout]({url})\n\n"
+                        "Use a Personal sandbox buyer account, not your real PayPal login. "
+                        "This link expires in one hour. Test credits cannot be spent.\n\n"
+                        "Once the bot update is deployed, you can also use `/slop-bot -pay-test 10` "
+                        "to test from Slack. Regular `-pay` keeps its existing Venmo flow until "
+                        "live PayPal is explicitly enabled.\n")
+          PY
