@@ -471,6 +471,28 @@ def test_api_uses_sandbox_and_stable_idempotency_ids(purchase):
     assert json.loads(calls[0].kwargs["data"])["purchase_units"][0]["amount"]["value"] == "10.00"
 
 
+@pytest.mark.parametrize("amount", ["1.00", "10.00", "12.34", "500.00"])
+def test_credit_orders_are_digital_and_do_not_collect_shipping(purchase, amount):
+    purchase["amount"] = Decimal(amount)
+    api = PayPal()
+    with patch.object(api, "request", return_value={"id": "ORDER123"}) as request:
+        api.create_order(purchase)
+    order = request.call_args.kwargs["data"]
+    assert order["application_context"]["shipping_preference"] == "NO_SHIPPING"
+    # Either wallet can approve the same order, including after a cancellation.
+    assert "payment_source" not in order
+    unit, = order["purchase_units"]
+    assert "shipping" not in unit
+    assert unit["custom_id"] == purchase["id"]
+    assert unit["invoice_id"] == purchase["id"]
+    assert unit["amount"]["value"] == amount
+    item, = unit["items"]
+    assert item["category"] == "DIGITAL_GOODS"
+    assert item["quantity"] == "1"
+    assert item["unit_amount"] == unit["amount"]["breakdown"]["item_total"]
+    assert Decimal(item["unit_amount"]["value"]) * int(item["quantity"]) == Decimal(amount)
+
+
 def test_checkout_html_contains_only_public_configuration():
     event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/payments/sandbox/checkout"}
     response = payment_handler.handler(event, None)

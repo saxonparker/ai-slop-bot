@@ -66,13 +66,21 @@ class PayPal:
 
     def create_order(self, purchase):
         """Bind the expected amount and internal purchase ID on PayPal's server."""
+        amount = {"currency_code": "USD", "value": str(purchase["amount"])}
         return self.request("POST", "/v2/checkout/orders", request_id="order-" + purchase["id"][:32], data={
             "intent": "CAPTURE",
+            # This order is shared by the PayPal and Venmo SDK sessions, so set
+            # shipping at order level without preselecting a payment source.
+            "application_context": {"shipping_preference": "NO_SHIPPING"},
             "purchase_units": [{
                 "custom_id": purchase["id"],
                 "invoice_id": purchase["id"],
                 "description": "AI Slop credits",
-                "amount": {"currency_code": "USD", "value": str(purchase["amount"])},
+                "amount": {**amount, "breakdown": {"item_total": amount}},
+                "items": [{
+                    "name": "AI Slop credits", "category": "DIGITAL_GOODS",
+                    "quantity": "1", "unit_amount": amount,
+                }],
             }],
         })
 
