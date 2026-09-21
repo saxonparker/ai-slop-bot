@@ -123,5 +123,9 @@ from a user's bot balance by this initial checkout integration.
 
 From `ai_slop_bot`, run `.venv/bin/pytest tests/ -q`. Payment tests mock PayPal
 and use botocore's DynamoDB request validation; they never move real money.
+From the repository root, run `npm ci`, `npx playwright install --with-deps chromium`,
+then `npm run test:checkout` for browser regression tests. These mock the PayPal
+SDK and payment endpoints while exercising real browser behavior, including
+HTML element IDs that become global properties. Both deployment workflows run them.
 The GitHub sandbox workflow and the buyer acceptance checks above are the
 separate integration test with PayPal and AWS.

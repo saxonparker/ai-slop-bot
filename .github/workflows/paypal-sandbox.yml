@@ -36,6 +36,15 @@ jobs:
         run: |
           pip install requests boto3 pytest
           pytest tests/test_payments.py -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Test checkout in Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:checkout
       - name: Check sandbox credentials
         working-directory: ai_slop_bot
         env:

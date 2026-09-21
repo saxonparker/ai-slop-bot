@@ -21,8 +21,8 @@
   <p id="amount">Loading your checkout...</p>
   <p>Your balance updates after payment is confirmed. Closing or cancelling checkout adds no credits.</p>
   <div id="buttons" hidden>
-    <paypal-button id="paypal" type="pay" hidden></paypal-button>
-    <venmo-button id="venmo" type="pay" hidden></venmo-button>
+    <paypal-button id="paypal-button" type="pay" hidden></paypal-button>
+    <venmo-button id="venmo-button" type="pay" hidden></venmo-button>
   </div>
   <p id="status" role="status" aria-live="polite"></p>
   <button id="check" type="button" hidden>Check payment status</button>
@@ -83,7 +83,13 @@ async function initialize() {
     script.onerror = () => reject(new Error('Could not load PayPal. Please reload this page.'));
     document.head.appendChild(script);
   });
-  const sdk = await window.paypal.createInstance({
+  // PayPal v6 uses a nested namespace if another SDK already owns window.paypal.
+  // Avoid id="paypal": browser named properties would claim that namespace too.
+  const paypalSdk = window.paypal?.v6 || window.paypal;
+  if (typeof paypalSdk?.createInstance !== 'function') {
+    throw new Error('PayPal could not initialize. Please reload this checkout.');
+  }
+  const sdk = await paypalSdk.createInstance({
     clientId: config.clientId, components: ['paypal-payments', 'venmo-payments'], pageType: 'checkout',
   });
   const eligible = await sdk.findEligibleMethods({currencyCode: 'USD'});
@@ -101,7 +107,7 @@ async function initialize() {
   ]) {
     if (!eligible.isEligible(method)) continue;
     const session = sdk[factory](callbacks);
-    const button = document.getElementById(method);
+    const button = document.getElementById(`${method}-button`);
     button.hidden = false;
     count++;
     button.addEventListener('click', async () => {

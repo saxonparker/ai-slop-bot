@@ -1,0 +1,10 @@
+{
+  "name": "ai-slop-checkout-tests",
+  "private": true,
+  "scripts": {
+    "test:checkout": "node --test ai_slop_bot/tests/checkout_browser.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
