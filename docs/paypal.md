@@ -77,6 +77,9 @@ purchase has one corresponding entry in `ai-slop-payments-sandbox` with status
 Use events from actual sandbox checkouts. PayPal's standalone webhook simulator
 does not support the postback verification endpoint used here; simulated events
 are intentionally rejected. See [PayPal's webhook verification guide](https://developer.paypal.com/api/rest/webhooks/rest/).
+Successful webhook processing logs `PAYMENT WEBHOOK: accepted` and the verified
+event ID in the payment Lambda's CloudWatch logs. Match this ID to PayPal's event
+history to confirm delivery; no payer details or checkout tokens are logged.
 
 Venmo appears when PayPal reports it is eligible for the customer/device.
 Its sandbox behavior differs from live checkout: desktop QR checkout is not

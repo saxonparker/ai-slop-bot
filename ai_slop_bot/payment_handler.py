@@ -60,6 +60,8 @@ def handler(event, _context):
             if not api.verify_webhook(headers, raw):
                 return _response(401, {"error": "Invalid payment notification signature."})
             payments.webhook(payload, api)
+            # Log only the verified event ID so delivery can be checked without payer data.
+            print(f"PAYMENT WEBHOOK: accepted {str(payload.get('id', 'unknown'))[:100]!r}")
             return _response(200, {"received": True})
         purchase = payments.from_token(payload.get("token"))
         if path == base_path + "/status":
