@@ -18,9 +18,14 @@ variable "openai_organization" {
   sensitive = true
 }
 
+variable "openai_image_model" {
+  type    = string
+  default = "gpt-image-2.5-flare"
+}
+
 variable "openai_image_edit_model" {
   type    = string
-  default = "gpt-image-2"
+  default = "gpt-image-2.5-sunburst"
 }
 
 variable "grok_image_edit_timeout_seconds" {

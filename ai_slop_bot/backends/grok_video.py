@@ -4,6 +4,7 @@ import os
 import time
 
 import requests
+import model_config
 from usage import (
     GenerationResult,
     ProviderGenerationError,
@@ -19,7 +20,6 @@ BASE_URL = "https://api.x.ai/v1"
 POLL_INTERVAL = 5
 MAX_POLL_ATTEMPTS = 120
 
-DEFAULT_MODEL = "grok-imagine-video-1.5"
 DEFAULT_RESOLUTION = "1080p"
 # Ordered low to high so resolutions can be clamped by index.
 RESOLUTIONS = ("480p", "720p", "1080p")
@@ -104,7 +104,7 @@ class GrokProvider:
         video_url: str | None = None,
     ) -> GenerationResult:
         api_key = os.environ["XAI_API_KEY"]
-        model = os.environ.get("VIDEO_MODEL", DEFAULT_MODEL)
+        model = model_config.get_model("video", "grok")
         duration = duration or int(os.environ.get("VIDEO_DURATION", "10"))
         headers = {
             "Content-Type": "application/json",

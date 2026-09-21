@@ -23,6 +23,7 @@ def test_anthropic_generate(mock_anthropic_cls):
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
     mock_block = MagicMock()
+    mock_block.type = "text"
     mock_block.text = "Hello from Claude"
     mock_message = MagicMock(content=[mock_block])
     mock_message.usage.input_tokens = 10
@@ -53,7 +54,7 @@ def test_anthropic_respects_model_override(mock_anthropic_cls):
 
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
-    mock_message = MagicMock(content=[MagicMock(text="ok")])
+    mock_message = MagicMock(content=[MagicMock(type="text", text="ok")])
     mock_message.usage.input_tokens = 5
     mock_message.usage.output_tokens = 5
     mock_client.messages.create.return_value = mock_message
@@ -76,6 +77,7 @@ def test_gemini_text_generate(mock_client_cls):
     mock_client_cls.return_value = mock_client
     mock_response = MagicMock(text="Hello from Gemini")
     mock_response.usage_metadata.prompt_token_count = 8
+    mock_response.usage_metadata.thoughts_token_count = 0
     mock_response.usage_metadata.candidates_token_count = 12
     mock_client.models.generate_content.return_value = mock_response
 
@@ -104,6 +106,7 @@ def test_gemini_text_raises_on_none_response(mock_client_cls):
     mock_client_cls.return_value = mock_client
     mock_response = MagicMock(text=None)
     mock_response.usage_metadata.prompt_token_count = 8
+    mock_response.usage_metadata.thoughts_token_count = 0
     mock_response.usage_metadata.candidates_token_count = 0
     mock_client.models.generate_content.return_value = mock_response
 
@@ -323,7 +326,7 @@ def test_openai_image_generate(mock_openai_cls, mock_requests_get):
     mock_client = MagicMock()
     mock_openai_cls.return_value = mock_client
     mock_client.images.generate.return_value = MagicMock(
-        data=[MagicMock(url="https://fake-url.com/image.png")]
+        data=[MagicMock(b64_json=None, url="https://fake-url.com/image.png")], usage=None
     )
     fake_bytes = b"\x89PNG fake image data"
     mock_requests_get.return_value = MagicMock(content=fake_bytes)
@@ -336,7 +339,7 @@ def test_openai_image_generate(mock_openai_cls, mock_requests_get):
     assert result.backend == "openai"
     assert result.cost_estimate == 0.08
     mock_client.images.generate.assert_called_once_with(
-        prompt="a cat", n=1, size="1024x1024", model="dall-e-3", quality="hd"
+        prompt="a cat", n=1, size="1024x1024", model="gpt-image-2.5-flare", quality="medium"
     )
     mock_requests_get.assert_called_once_with("https://fake-url.com/image.png", timeout=10000)
 
@@ -349,7 +352,7 @@ def test_openai_image_edit_with_reference(mock_openai_cls):
     mock_client = MagicMock()
     mock_openai_cls.return_value = mock_client
     encoded = base64.b64encode(b"edited").decode("ascii")
-    mock_client.images.edit.return_value = MagicMock(data=[MagicMock(b64_json=encoded)])
+    mock_client.images.edit.return_value = MagicMock(data=[MagicMock(b64_json=encoded)], usage=None)
 
     result = OpenAIProvider().generate(
         "make art",
@@ -357,10 +360,10 @@ def test_openai_image_edit_with_reference(mock_openai_cls):
     )
 
     assert result.content == b"edited"
-    assert result.model == "gpt-image-2"
+    assert result.model == "gpt-image-2.5-sunburst"
     mock_client.images.generate.assert_not_called()
     edit_kwargs = mock_client.images.edit.call_args.kwargs
-    assert edit_kwargs["model"] == "gpt-image-2"
+    assert edit_kwargs["model"] == "gpt-image-2.5-sunburst"
     assert edit_kwargs["prompt"] == "make art"
 
 
@@ -900,7 +903,7 @@ def test_anthropic_chat_passes_history(mock_anthropic_cls):
 
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
-    mock_block = MagicMock(text="follow-up reply")
+    mock_block = MagicMock(type="text", text="follow-up reply")
     mock_message = MagicMock(content=[mock_block])
     mock_message.usage.input_tokens = 50
     mock_message.usage.output_tokens = 10
@@ -980,6 +983,7 @@ def test_gemini_chat_uses_model_role_and_parts(mock_client_cls):
     mock_client_cls.return_value = mock_client
     mock_response = MagicMock(text="follow-up")
     mock_response.usage_metadata.prompt_token_count = 20
+    mock_response.usage_metadata.thoughts_token_count = 0
     mock_response.usage_metadata.candidates_token_count = 4
     mock_client.models.generate_content.return_value = mock_response
 

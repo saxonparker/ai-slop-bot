@@ -6,6 +6,7 @@ import re
 from openai import OpenAI
 
 import conversations
+import model_config
 from usage import GenerationResult, estimate_text_cost
 
 
@@ -28,7 +29,7 @@ class OpenAIProvider:
             api_key=os.environ["OPENAI_API_KEY"],
             organization=os.environ["OPENAI_ORGANIZATION"],
         )
-        model = os.environ.get("TEXT_MODEL", "gpt-5.5")
+        model = model_config.get_model("text", "openai")
         api_msgs = []
         if len(system) > 0:
             api_msgs.append({"role": "system", "content": system})
@@ -37,7 +38,7 @@ class OpenAIProvider:
         reply = response.choices[0].message.content
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
-        cost = estimate_text_cost("openai", input_tokens, output_tokens)
+        cost = estimate_text_cost("openai", input_tokens, output_tokens, model=model)
         return GenerationResult(
             content=clean_response(reply),
             backend="openai",

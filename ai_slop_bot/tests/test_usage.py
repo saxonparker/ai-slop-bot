@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.append(".")
 
 from usage import (
@@ -411,6 +413,31 @@ def test_get_total_cost_prefers_actual_cost(mock_boto3):
     ]}
 
     assert get_total_cost("testuser") == 0.05
+
+
+@patch("usage._get_table")
+def test_get_total_cost_includes_all_pages(mock_table):
+    cursor = {"user": "testuser", "timestamp": "2026-01-01T00:00:00Z"}
+    mock_table.return_value.query.side_effect = [
+        {"Items": [{"cost_actual": Decimal("4.99")}], "LastEvaluatedKey": cursor},
+        {"Items": [{"cost_estimate": Decimal("5.01")}]},
+    ]
+
+    assert get_total_cost("testuser") == 10.0
+    calls = mock_table.return_value.query.call_args_list
+    assert len(calls) == 2
+    assert calls[1].kwargs["ExclusiveStartKey"] == cursor
+    assert all(call.kwargs["ConsistentRead"] for call in calls)
+
+
+@patch("usage._get_table")
+def test_get_total_cost_does_not_return_partial_total_on_page_failure(mock_table):
+    mock_table.return_value.query.side_effect = [
+        {"Items": [], "LastEvaluatedKey": {"user": "testuser", "timestamp": "cursor"}},
+        RuntimeError("DynamoDB unavailable"),
+    ]
+    with pytest.raises(RuntimeError, match="DynamoDB unavailable"):
+        get_total_cost("testuser")
 
 
 @patch("usage.boto3")

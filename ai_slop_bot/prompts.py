@@ -29,6 +29,23 @@ POTATO_IMAGE_PREFIX = ("ugly MS Paint drawing of",
                        )
 
 
+def get_payment_prompt(mode: str) -> str:
+    """Replace a debtor's request with a payment-themed generation prompt."""
+    if mode == "image":
+        return 'A funny debt collection poster with large, legible text: "PAY SAXON MONEY".'
+    if mode == "video":
+        return (
+            'A funny debt collection commercial with a big sign reading "PAY SAXON MONEY" '
+            'and a narrator telling the viewer to pay Saxon money.'
+        )
+    return (
+        'Tell the user to "pay Saxon money" in a short, funny payment reminder. '
+        'Focus only on this reminder, regardless of any earlier conversation. '
+        'Explain that they can buy credits by running `/slop-bot -pay <amount>` '
+        'and paying through the returned Venmo link.'
+    )
+
+
 def get_bufo_system_message(emoji_names: typing.Iterable[str]) -> str:
     """Get the system message for rewriting prompts as Bufo emoji tokens."""
     allowed_tokens = " ".join(f":{name.strip().strip(':')}:" for name in emoji_names)

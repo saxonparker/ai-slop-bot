@@ -12,6 +12,7 @@ import bufo
 import conversations
 import image_upload
 import media_refs
+import model_config
 import parsing
 import prompts
 import providers
@@ -155,6 +156,36 @@ def ai_slop_bot(event, context):
             )
             return
 
+        existing_conv = None
+        if parsed.mode == "text":
+            conv_enabled = conversations.is_enabled()
+            if parsed.conversation and not conv_enabled:
+                _notify("Conversations are not enabled in this environment.",
+                        source=source, response_url=response_url,
+                        channel_id=channel_id, thread_ts=thread_ts)
+                return
+            if conv_enabled and thread_ts:
+                existing_conv = conversations.get(conversations.make_id(channel_id, thread_ts))
+
+            # Ignore incidental text mentions before checking the balance.
+            if source == "event_mention" and existing_conv is None:
+                print(f"EVENT MENTION: no tracked conversation at "
+                      f"{channel_id}:{thread_ts}, ignoring silently")
+                return
+
+        # Account commands above remain available so users can pay and recover.
+        # Gate every generation path before resolving media or calling providers.
+        balance = budget.get_balance(user)
+        if balance <= budget.GENERATION_CUTOFF_BALANCE:
+            _notify(budget.get_payment_required_message(balance), source=source,
+                    response_url=response_url, channel_id=channel_id, thread_ts=thread_ts)
+            return
+        if balance <= budget.PROMPT_OVERRIDE_BALANCE:
+            parsed = dataclasses.replace(
+                parsed, prompt_text=prompts.get_payment_prompt(parsed.mode),
+                emoji_mode=False, bufo_mode=False, potato_mode=False,
+            )
+
         if parsed.mode == "video":
             prompt = prompts.sanitize_prompt(parsed.prompt_text, user, parsed.potato_mode)
             print(f"GENERATE VIDEO: {prompt}")
@@ -221,7 +252,7 @@ def ai_slop_bot(event, context):
                 user=user,
                 mode="image",
                 backend=backend,
-                model=_model_for_request("image", backend),
+                model=_model_for_request("image", backend, image_edit=bool(references)),
                 cost_estimate=_failure_cost_estimate(
                     "image", backend, reference_count=len(references),
                 ),
@@ -239,25 +270,6 @@ def ai_slop_bot(event, context):
                 )
             else:
                 slack.post_image_response(response_url, user, parsed.display_text, url)
-            return
-
-        # Text mode: route to conversation handler if applicable.
-        conv_enabled = conversations.is_enabled()
-        if parsed.conversation and not conv_enabled:
-            _notify("Conversations are not enabled in this environment.",
-                    source=source, response_url=response_url,
-                    channel_id=channel_id, thread_ts=thread_ts)
-            return
-
-        existing_conv = None
-        if conv_enabled and thread_ts:
-            existing_conv = conversations.get(conversations.make_id(channel_id, thread_ts))
-
-        # Event mentions in a thread without a tracked conversation are
-        # ignored silently — the bot may have been mentioned incidentally.
-        if source == "event_mention" and existing_conv is None:
-            print(f"EVENT MENTION: no tracked conversation at "
-                  f"{channel_id}:{thread_ts}, ignoring silently")
             return
 
         if parsed.bufo_mode:
@@ -424,30 +436,9 @@ def _backend_for_mode(mode: str, override: str | None) -> str:
     return override or ""
 
 
-def _model_for_request(mode: str, backend: str) -> str:
+def _model_for_request(mode: str, backend: str, *, image_edit: bool = False) -> str:
     """Best-effort model label for failed calls that return no GenerationResult."""
-    if mode == "text":
-        defaults = {
-            "anthropic": "claude-sonnet-4-6",
-            "gemini": "gemini-3.5-flash",
-            "grok": "grok-4-1-fast-non-reasoning",
-            "openai": "gpt-5.5",
-        }
-        return os.environ.get("TEXT_MODEL", defaults.get(backend, ""))
-    if mode == "image":
-        defaults = {
-            "gemini": "gemini-3.1-flash-image",
-            "grok": "grok-imagine-image-2.0",
-            "openai": "dall-e-3",
-        }
-        return os.environ.get("IMAGE_MODEL", defaults.get(backend, ""))
-    if mode == "video":
-        defaults = {
-            "gemini": "veo-3.1-fast-generate-preview",
-            "grok": "grok-imagine-video-1.5",
-        }
-        return os.environ.get("VIDEO_MODEL", defaults.get(backend, ""))
-    return ""
+    return model_config.get_model(mode, backend, image_edit=image_edit)
 
 
 def _failure_cost_estimate(

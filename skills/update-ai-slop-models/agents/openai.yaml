@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update AI Slop Models"
+  short_description: "Find and integrate current models for AI Slop Bot"
+  default_prompt: "Use $update-ai-slop-models to check official provider releases and apply supported model upgrades, pricing changes, and tests to AI Slop Bot."

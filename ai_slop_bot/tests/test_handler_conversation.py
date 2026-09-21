@@ -21,6 +21,13 @@ from media_refs import ReferenceImage, ResolvedImage, ResolvedVideo  # noqa: E40
 from parsing import ParsedCommand  # noqa: E402  pylint: disable=wrong-import-position
 
 
+@pytest.fixture(autouse=True)
+def sufficient_balance():
+    """Keep orchestration tests independent of live billing data."""
+    with patch("ai_slop_bot.budget.get_balance", return_value=0.0):
+        yield
+
+
 def _parsed(prompt="follow up"):
     return ParsedCommand(mode="text", display_text=prompt, prompt_text=prompt)
 

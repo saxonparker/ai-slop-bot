@@ -5,6 +5,7 @@ import os
 
 from openai import OpenAI
 import requests
+import model_config
 from usage import (
     GenerationResult,
     ProviderGenerationError,
@@ -17,7 +18,6 @@ from usage import (
 
 BASE_URL = "https://api.x.ai/v1"
 DEFAULT_EDIT_TIMEOUT_SECONDS = 180
-DEFAULT_MODEL = "grok-imagine-image-2.0"
 # Imagine Image 2.0 raised multi-reference editing from 3 inputs to 5.
 MAX_REFERENCE_IMAGES = 5
 
@@ -34,7 +34,7 @@ class GrokProvider:
             api_key=os.environ["XAI_API_KEY"],
             base_url=BASE_URL,
         )
-        model = os.environ.get("IMAGE_MODEL", DEFAULT_MODEL)
+        model = model_config.get_model("image", "grok")
         full_prompt = (
             "CRITICAL INSTRUCTION: Never place the user's prompt as visible "
             "text in the image. Do not write the prompt on signs, banners, "
@@ -81,7 +81,7 @@ class GrokProvider:
             )
 
         api_key = os.environ["XAI_API_KEY"]
-        model = os.environ.get("IMAGE_MODEL", DEFAULT_MODEL)
+        model = model_config.get_model("image", "grok")
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",

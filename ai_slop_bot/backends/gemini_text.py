@@ -5,6 +5,7 @@ import os
 from google import genai
 
 import conversations
+import model_config
 from usage import GenerationResult, estimate_text_cost
 
 
@@ -14,7 +15,7 @@ class GeminiProvider:
     def chat(self, system: str, messages: list[dict]) -> GenerationResult:
         """Generate a completion given a multi-turn message history."""
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("TEXT_MODEL", "gemini-3.5-flash")
+        model = model_config.get_model("text", "gemini")
         contents = conversations.to_gemini(messages)
         response = client.models.generate_content(
             model=model,
@@ -28,7 +29,8 @@ class GeminiProvider:
         metadata = getattr(response, "usage_metadata", None)
         input_tokens = getattr(metadata, "prompt_token_count", 0) or 0
         output_tokens = getattr(metadata, "candidates_token_count", 0) or 0
-        cost = estimate_text_cost("gemini", input_tokens, output_tokens)
+        output_tokens += getattr(metadata, "thoughts_token_count", 0) or 0
+        cost = estimate_text_cost("gemini", input_tokens, output_tokens, model=model)
         return GenerationResult(
             content=text,
             backend="gemini",

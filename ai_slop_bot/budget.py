@@ -10,6 +10,8 @@ import boto3
 import usage
 
 ADMIN_USERS = set(os.environ.get("ADMIN_USERS", "saxon").split(","))
+PROMPT_OVERRIDE_BALANCE = -5.00
+GENERATION_CUTOFF_BALANCE = -10.00
 
 SNARKY_MESSAGES = [
     (-1.00, "you're in the red. not a great look."),
@@ -43,25 +45,45 @@ def add_credit(user: str, amount: float, source_user: str, note: str = "") -> fl
 
 def _get_total_credits(user: str) -> float:
     """Sum all ledger amounts for a user."""
-    try:
-        table = _get_ledger_table()
-        response = table.query(
-            KeyConditionExpression="#u = :user",
-            ExpressionAttributeNames={"#u": "user"},
-            ExpressionAttributeValues={":user": user},
-            ProjectionExpression="amount",
-        )
-        return sum(float(r.get("amount", 0)) for r in response.get("Items", []))
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"LEDGER QUERY ERROR: {exc}")
-        return 0.0
+    table = _get_ledger_table()
+    query = {
+        "KeyConditionExpression": "#u = :user",
+        "ExpressionAttributeNames": {"#u": "user"},
+        "ExpressionAttributeValues": {":user": user},
+        "ProjectionExpression": "amount",
+        "ConsistentRead": True,
+    }
+    total = 0.0
+    while True:
+        response = table.query(**query)
+        total += sum(float(r.get("amount", 0)) for r in response.get("Items", []))
+        if not response.get("LastEvaluatedKey"):
+            return total
+        query["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
 def get_balance(user: str) -> float:
     """Calculate balance: total credits - total usage costs."""
-    credits = _get_total_credits(user)
-    costs = usage.get_total_cost(user)
+    try:
+        credits = _get_total_credits(user)
+        costs = usage.get_total_cost(user)
+    except Exception as exc:
+        # An unknown balance must not grant free generation or look like debt.
+        raise RuntimeError("Could not retrieve your balance. Please try again shortly.") from exc
     return round(credits - costs, 2)
+
+
+def get_payment_required_message(balance: float) -> str:
+    """Explain the generation cutoff and the existing credit purchase flow."""
+    return (
+        f":no_entry: Pay Saxon money. Your balance is *${balance:.2f}*, "
+        "so generation is paused.\n"
+        "To get credits, run `/slop-bot -pay <amount>` (for example, "
+        "`/slop-bot -pay 10`), then follow the returned Venmo link to pay Saxon.\n"
+        "Check your balance with `/slop-bot -u`. "
+        f"Generation resumes above ${GENERATION_CUTOFF_BALANCE:.2f}; "
+        f"your own prompts resume above ${PROMPT_OVERRIDE_BALANCE:.2f}."
+    )
 
 
 def get_last_payment(user: str):

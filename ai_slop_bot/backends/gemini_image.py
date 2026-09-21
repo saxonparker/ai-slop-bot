@@ -5,6 +5,7 @@ import os
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+import model_config
 from usage import (
     COST_PER_IMAGE,
     GenerationResult,
@@ -30,7 +31,7 @@ class GeminiProvider:
 
     def generate(self, prompt: str, references: list | None = None) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("IMAGE_MODEL", "gemini-3.1-flash-image")
+        model = model_config.get_model("image", "gemini")
         contents = [prompt]
         for reference in references or []:
             contents.append(

@@ -5,6 +5,7 @@ import os
 from openai import OpenAI
 
 import conversations
+import model_config
 from usage import (
     GenerationResult,
     ProviderGenerationError,
@@ -24,13 +25,15 @@ class GrokProvider:
             api_key=os.environ["XAI_API_KEY"],
             base_url="https://api.x.ai/v1",
         )
-        model = os.environ.get("TEXT_MODEL", "grok-4-1-fast-non-reasoning")
+        model = model_config.get_model("text", "grok")
         api_msgs = []
         if len(system) > 0:
             api_msgs.append({"role": "system", "content": system})
         api_msgs.extend(conversations.to_openai_chat(messages))
+        # Preserve the old non-reasoning workload when replacing its retired ID.
+        options = {"reasoning_effort": "none"} if model == "grok-4.3" else {}
         try:
-            response = client.chat.completions.create(model=model, messages=api_msgs)
+            response = client.chat.completions.create(model=model, messages=api_msgs, **options)
         except Exception as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
             error_type, user_message = classify_xai_error(exc)
@@ -46,7 +49,7 @@ class GrokProvider:
         reply = response.choices[0].message.content
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
-        cost = estimate_text_cost("grok", input_tokens, output_tokens)
+        cost = estimate_text_cost("grok", input_tokens, output_tokens, model=model)
         cost_actual, cost_ticks = xai_cost_from_usage(response.usage)
         return GenerationResult(
             content=reply,

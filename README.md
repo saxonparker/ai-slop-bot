@@ -159,6 +159,23 @@ when the command is accepted and does not verify Venmo settlement.
 `/slop-bot -u` shows the caller's usage summary plus their current balance. The
 balance display includes the latest ledger entry amount/date when one exists.
 
+Before each generation, the bot checks the requesting user's balance:
+
+- Above -$5, prompts work normally.
+- At or below -$5 (but above -$10), the prompt is replaced with a "pay Saxon
+  money" reminder, poster, or commercial for text, images, or videos. This
+  overrides emoji, bufo, and potato modes too.
+- At or below -$10, generation is blocked without calling a provider. The reply
+  explains how to add credits with `/slop-bot -pay <amount>` and pay through the
+  returned Venmo link.
+
+These limits also apply to uploaded media requests and each participant's
+conversation turns. Usage, payment, gallery, and authorized admin commands
+remain available. Adding credits restores normal prompts once the balance is
+above -$5. If the balance cannot be retrieved, generation waits for a retry.
+The check uses recorded costs before the request; an in-flight request can
+still push the balance past a threshold.
+
 Admin budget commands are gated by `ADMIN_USERS`, a comma-separated list of
 Slack usernames with no spaces:
 
@@ -226,15 +243,48 @@ Two-Lambda architecture:
 
 | Type  | Backend    | Default model                     | Default |
 |-------|------------|-----------------------------------|---------|
-| Text  | anthropic  | `claude-sonnet-4-6`               |         |
-| Text  | gemini     | `gemini-3.5-flash`                | Yes     |
-| Text  | openai     | `gpt-5.5`                         |         |
-| Text  | grok       | `grok-4-1-fast-non-reasoning`     |         |
+| Text  | anthropic  | `claude-sonnet-5`                 |         |
+| Text  | gemini     | `gemini-3.8-flash`                | Yes     |
+| Text  | openai     | `gpt-5.6-sol`                    |         |
+| Text  | grok       | `grok-4.3` (reasoning off)       |         |
 | Image | gemini     | `gemini-3.1-flash-image`          |         |
-| Image | openai     | `dall-e-3`                        |         |
+| Image | openai     | `gpt-image-2.5-flare`             |         |
 | Image | grok       | `grok-imagine-image-2.0`          | Yes     |
 | Video | grok       | `grok-imagine-video-1.5`          | Yes     |
 | Video | gemini     | `veo-3.1-fast-generate-preview`   |         |
+
+OpenAI reference edits default to `gpt-image-2.5-sunburst`. Both GPT Image 2.5
+models support generation and editing; select either with `OPENAI_IMAGE_MODEL`
+or `OPENAI_IMAGE_EDIT_MODEL`. Images use medium quality at 1024x1024, and costs
+are estimated from the returned text/image token breakdown. Without token usage,
+the existing $0.08 image estimate is used. Cached-token discounts are not included
+in these estimates.
+
+### Model maintenance
+
+Use `$update-ai-slop-models` in Codex to check releases and apply supported
+upgrades, API compatibility changes, pricing updates, and tests. The versioned
+skill lives in [skills/update-ai-slop-models](skills/update-ai-slop-models/SKILL.md);
+install that folder under `~/.codex/skills/` for personal discovery. It runs when
+invoked and does not create a recurring schedule or deploy changes.
+
+Model defaults are shared in `ai_slop_bot/model_config.py`. Last reviewed
+2026-09-21 against [OpenAI models](https://developers.openai.com/api/docs/models),
+[OpenAI images](https://developers.openai.com/api/docs/guides/image-generation),
+[Gemini models](https://ai.google.dev/gemini-api/docs/models),
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing),
+[Claude models](https://platform.claude.com/docs/en/models/overview), and
+[xAI models](https://docs.x.ai/developers/models).
+
+The Grok text route uses the documented replacement for its
+[retired non-reasoning alias](https://docs.x.ai/developers/migration/may-15-retirement).
+Grok 4.7 is available via `TEXT_MODEL` but is a higher-priced tier. Gemini Omni
+video needs a separate integration; the existing Veo adapter remains in use.
+OpenAI's Sora API is omitted because its
+[scheduled shutdown is September 24, 2026](https://developers.openai.com/api/docs/deprecations#2026-03-24-sora-2-video-generation-models-and-videos-api).
+Text estimates use model-specific standard rates. Gemini 3.8 Flash's published
+January 2027 rate change is applied by date. OpenAI's current GPT-5.6 Sol pricing
+is promotional through at least November 21, 2026; recheck rates on later reviews.
 
 ## Environment Variables
 
@@ -253,7 +303,8 @@ Two-Lambda architecture:
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
 | `GROK_IMAGE_EDIT_TIMEOUT_SECONDS` | `180` | Timeout for Grok image edit requests |
 | `OPENAI_API_KEY` | — | Required if using openai backends |
-| `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2` | OpenAI model used when reference images are supplied |
+| `OPENAI_IMAGE_MODEL` | `gpt-image-2.5-flare` | OpenAI generation model; `IMAGE_MODEL` takes precedence when set |
+| `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2.5-sunburst` | OpenAI model used when reference images are supplied |
 | `OPENAI_ORGANIZATION` | — | Required if using openai backends |
 | `XAI_API_KEY` | — | Required if using grok backends |
 | `SLACK_BOT_TOKEN` | — | Slack Web API token for posting responses, uploads, modals, reference downloads, cleanup, and user lookup |

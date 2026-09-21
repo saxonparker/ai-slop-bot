@@ -8,6 +8,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 from PIL import Image
+import model_config
 from usage import (
     COST_PER_VIDEO,
     GenerationResult,
@@ -43,7 +44,7 @@ class GeminiProvider:
         if references:
             raise ValueError("Veo reference images are not supported by this backend yet; use -b grok.")
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        model = os.environ.get("VIDEO_MODEL", "veo-3.1-fast-generate-preview")
+        model = model_config.get_model("video", "gemini")
         requested = duration or int(os.environ.get("VIDEO_DURATION", "8"))
         # Veo only produces 4, 6, or 8 second clips — snap to the nearest.
         duration = min(SUPPORTED_DURATIONS, key=lambda d: abs(d - requested))

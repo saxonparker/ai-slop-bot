@@ -127,6 +127,7 @@ resource "aws_lambda_function" "bot" {
       GROK_IMAGE_EDIT_TIMEOUT_SECONDS = tostring(var.grok_image_edit_timeout_seconds)
       OPENAI_API_KEY                  = var.openai_api_key
       OPENAI_IMAGE_EDIT_MODEL         = var.openai_image_edit_model
+      OPENAI_IMAGE_MODEL              = var.openai_image_model
       OPENAI_ORGANIZATION             = var.openai_organization
       XAI_API_KEY                     = var.xai_api_key
       SLACK_BOT_TOKEN                 = var.slack_bot_token

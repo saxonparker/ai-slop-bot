@@ -43,7 +43,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
 
 *Flags can be combined:*
   `{CANONICAL_SLASH_COMMAND} -p -i a beautiful sunset` — potato mode image
-  `{CANONICAL_SLASH_COMMAND} -i -b openai a cat` — image with DALL-E
+  `{CANONICAL_SLASH_COMMAND} -i -b openai a cat` — image with GPT Image
   `{CANONICAL_SLASH_COMMAND} -v -b gemini a corgi surfing` — video with Veo (native audio/dialogue)
 
 *Reference images and videos:*

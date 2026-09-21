@@ -27,6 +27,24 @@ COST_PER_MILLION_TOKENS = {
     "grok_text": {"input": 0.20, "output": 0.50},
 }
 
+# Model-specific standard rates verified 2026-09-21; older callers without a
+# model retain the legacy estimates above. Sources are linked in README.md.
+TEXT_MODEL_RATES = {
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00},
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+    "gemini-3.8-flash": {"input": 0.75, "output": 3.75},
+    "gemini-3.5-flash": {"input": 1.50, "output": 9.00},
+    "gpt-5.6-sol": {"input": 4.00, "output": 20.00},
+    "gpt-5.6": {"input": 4.00, "output": 20.00},
+    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
+    "gpt-6-astra": {"input": 10.00, "output": 50.00},
+    "gpt-5.5": {"input": 5.00, "output": 30.00},
+    "grok-4.3": {"input": 1.25, "output": 2.50},
+    "grok-4-1-fast-non-reasoning": {"input": 1.25, "output": 2.50},  # Redirects to 4.3.
+    "grok-4.7": {"input": 2.00, "output": 6.00},
+}
+
 COST_PER_VIDEO = {
     "grok": 0.08,  # grok-imagine-video-1.5, per second of video
     "gemini": 0.10,  # Veo 3.1 Fast @ 720p, per second (incl. audio)
@@ -67,11 +85,36 @@ class ProviderGenerationError(RuntimeError):
         self.cost_in_usd_ticks = cost_in_usd_ticks
 
 
-def estimate_text_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
+def estimate_text_cost(backend: str, input_tokens: int, output_tokens: int,
+                       *, model: str | None = None) -> float:
     """Estimate cost for a text generation request."""
     key = f"{backend}_text" if backend in ("openai", "gemini", "grok") else backend
-    rates = COST_PER_MILLION_TOKENS.get(key, {"input": 0.0, "output": 0.0})
+    rates = TEXT_MODEL_RATES.get(model) or COST_PER_MILLION_TOKENS.get(key, {"input": 0.0, "output": 0.0})
+    # Google's published promotional period has an explicit end and new rates.
+    if model == "gemini-3.8-flash" and datetime.now(timezone.utc).year >= 2027:
+        rates = {"input": 1.50, "output": 7.50}
+    if model in ("gpt-5.6", "gpt-5.6-sol") and input_tokens > 272_000:
+        rates = {"input": rates["input"] * 2, "output": rates["output"] * 1.5}
     return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
+
+
+def estimate_openai_image_cost(model: str, api_usage) -> float:
+    """Estimate GPT Image 2/2.5 costs from reported text/image token counts.
+
+    Rates: https://developers.openai.com/api/docs/guides/image-generation
+    These are estimates at uncached rates, not an actual billed-dollar field.
+    """
+    known_model = any(
+        model == name or model.startswith(name + "-")
+        for name in ("gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst")
+    )
+    output_tokens = getattr(api_usage, "output_tokens", None)
+    details = getattr(api_usage, "input_tokens_details", None)
+    text_tokens = getattr(details, "text_tokens", None)
+    image_tokens = getattr(details, "image_tokens", None)
+    if not known_model or not all(isinstance(count, int) for count in (output_tokens, text_tokens, image_tokens)):
+        return COST_PER_IMAGE["openai"]
+    return (text_tokens * 5.0 + image_tokens * 8.0 + output_tokens * 30.0) / 1_000_000
 
 
 def xai_cost_from_usage(api_usage) -> tuple[float | None, int | None]:
@@ -392,19 +435,22 @@ def get_usage_summary(user: str) -> list[dict] | str:
 
 
 def get_total_cost(user: str) -> float:
-    """Return the sum of all cost_estimate values for a user."""
-    try:
-        table = _get_table()
-        response = table.query(
-            KeyConditionExpression="#u = :user",
-            ExpressionAttributeNames={"#u": "user"},
-            ExpressionAttributeValues={":user": user},
-            ProjectionExpression="cost_estimate,cost_actual",
-        )
-        return sum(effective_cost(r) for r in response.get("Items", []))
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"USAGE QUERY ERROR: {exc}")
-        return 0.0
+    """Sum all billed costs (or estimates); raise if the balance is unknown."""
+    table = _get_table()
+    query = {
+        "KeyConditionExpression": "#u = :user",
+        "ExpressionAttributeNames": {"#u": "user"},
+        "ExpressionAttributeValues": {":user": user},
+        "ProjectionExpression": "cost_estimate,cost_actual",
+        "ConsistentRead": True,
+    }
+    total = 0.0
+    while True:
+        response = table.query(**query)
+        total += sum(effective_cost(r) for r in response.get("Items", []))
+        if not response.get("LastEvaluatedKey"):
+            return total
+        query["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
 def _format_block(label: str, records: list) -> dict:

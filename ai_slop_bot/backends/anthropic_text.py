@@ -5,6 +5,7 @@ import os
 import anthropic
 
 import conversations
+import model_config
 from usage import GenerationResult, estimate_text_cost
 
 
@@ -14,19 +15,20 @@ class AnthropicProvider:
     def chat(self, system: str, messages: list[dict]) -> GenerationResult:
         """Generate a completion given a multi-turn message history."""
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        model = os.environ.get("TEXT_MODEL", "claude-sonnet-4-6")
+        model = model_config.get_model("text", "anthropic")
         api_msgs = conversations.to_anthropic(messages)
         message = client.messages.create(
             model=model,
             max_tokens=4096,
             system=system,
             messages=api_msgs,
+            thinking={"type": "disabled"},
         )
         input_tokens = message.usage.input_tokens
         output_tokens = message.usage.output_tokens
-        cost = estimate_text_cost("anthropic", input_tokens, output_tokens)
+        cost = estimate_text_cost("anthropic", input_tokens, output_tokens, model=model)
         return GenerationResult(
-            content=message.content[0].text,
+            content="".join(block.text for block in message.content if block.type == "text"),
             backend="anthropic",
             model=model,
             input_tokens=input_tokens,

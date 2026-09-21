@@ -4,6 +4,8 @@ import sys
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.append(".")
 
 import budget
@@ -85,6 +87,31 @@ def test_get_balance_no_credits(mock_boto3, mock_total_cost):
 
     balance = budget.get_balance("testuser")
     assert balance == -2.00
+
+
+@patch("budget.usage.get_total_cost", return_value=20.00)
+@patch("budget._get_ledger_table")
+def test_balance_includes_all_credit_pages(mock_table, _mock_cost):
+    cursor = {"user": "testuser", "timestamp": "2026-01-01T00:00:00Z"}
+    mock_table.return_value.query.side_effect = [
+        {"Items": [{"amount": Decimal("5")}], "LastEvaluatedKey": cursor},
+        {"Items": [{"amount": Decimal("15")}]},
+    ]
+
+    assert budget.get_balance("testuser") == 0.0
+    calls = mock_table.return_value.query.call_args_list
+    assert len(calls) == 2
+    assert calls[1].kwargs["ExclusiveStartKey"] == cursor
+    assert all(call.kwargs["ConsistentRead"] for call in calls)
+
+
+@pytest.mark.parametrize("failed_read", ["budget._get_total_credits", "budget.usage.get_total_cost"])
+def test_balance_read_failure_is_not_treated_as_zero(failed_read):
+    with patch("budget._get_total_credits", return_value=20.0), \
+         patch("budget.usage.get_total_cost", return_value=5.0), \
+         patch(failed_read, side_effect=RuntimeError("DynamoDB unavailable")):
+        with pytest.raises(RuntimeError, match="Could not retrieve your balance"):
+            budget.get_balance("testuser")
 
 
 # ── add_credit ──────────────────────────────────────────────────────────────
