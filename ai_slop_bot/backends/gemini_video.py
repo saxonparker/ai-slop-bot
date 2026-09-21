@@ -36,9 +36,12 @@ class GeminiProvider:
         voices: list | None = None,
         video_op: str | None = None,
         video_url: str | None = None,
+        resolution: str | None = None,
     ) -> GenerationResult:
         if video_op:
             raise ValueError("Edit/extend video is only supported on the grok backend; use -b grok.")
+        if resolution:
+            raise ValueError("-r is only supported on the grok backend; use -b grok.")
         if voices:
             raise ValueError("Voices are only supported on the grok backend; use -b grok.")
         if references:

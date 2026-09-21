@@ -507,6 +507,7 @@ def test_video_start_image_is_resolved_and_passed_to_provider(
         voices=[],
         video_op=None,
         video_url=None,
+        resolution=None,
     )
 
 
@@ -545,6 +546,7 @@ def test_video_edit_is_passed_to_provider_without_image_refs(
         voices=[],
         video_op="edit",
         video_url="https://example.com/source.mp4",
+        resolution=None,
     )
     assert mock_upload.call_args.kwargs["extension"] == "mp4"
 
@@ -608,6 +610,7 @@ def test_uploaded_source_video_is_uploaded_and_passed_to_provider(
         voices=[],
         video_op="edit",
         video_url="https://cdn.example/source.mp4",
+        resolution=None,
     )
     assert mock_upload.call_args_list[1].kwargs["extension"] == "mp4"
 
@@ -786,3 +789,84 @@ def test_describe_error_omits_cost_when_unbilled():
     assert ai_slop_bot._describe_error_for_user(exc) == (
         "Grok rejected the request as malformed."
     )
+
+
+def test_resolution_passes_validation_for_grok_video():
+    parsed = ParsedCommand(mode="video", video_resolution="720p")
+    assert ai_slop_bot._validate_video_resolution(parsed) is None
+
+
+def test_resolution_validation_surfaces_the_parse_error():
+    parsed = ParsedCommand(mode="video", resolution_error="bad resolution")
+    assert ai_slop_bot._validate_video_resolution(parsed) == "bad resolution"
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+def test_resolution_is_rejected_outside_video_mode(mode):
+    parsed = ParsedCommand(mode=mode, video_resolution="720p")
+    assert ai_slop_bot._validate_video_resolution(parsed) == "-r can only be used with -v."
+
+
+@pytest.mark.parametrize("video_op", ["edit", "extend"])
+def test_resolution_is_rejected_for_video_edit_and_extend(video_op):
+    parsed = ParsedCommand(mode="video", video_resolution="720p", video_op=video_op)
+    assert ai_slop_bot._validate_video_resolution(parsed) == (
+        "-r cannot be combined with --edit-video or --extend-video."
+    )
+
+
+def test_resolution_is_rejected_on_the_gemini_backend():
+    parsed = ParsedCommand(mode="video", video_resolution="720p", backend_override="gemini")
+    assert ai_slop_bot._validate_video_resolution(parsed) == (
+        "-r is only supported on the grok backend; use -b grok."
+    )
+
+
+@patch.dict("os.environ", {"VIDEO_BACKEND": "gemini"})
+def test_resolution_is_rejected_when_gemini_is_the_env_default():
+    parsed = ParsedCommand(mode="video", video_resolution="720p")
+    assert ai_slop_bot._validate_video_resolution(parsed) == (
+        "-r is only supported on the grok backend; use -b grok."
+    )
+
+
+@patch("ai_slop_bot.usage.record_usage")
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_video_provider")
+@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
+@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
+@patch("ai_slop_bot.media_refs.resolve_reference_images", return_value=[])
+def test_video_resolution_flag_reaches_the_provider(
+    _mock_resolve_many, _mock_sanitize, _mock_upload,
+    mock_get_provider, mock_slack, _mock_record,
+):
+    provider = MagicMock()
+    provider.generate.return_value = _result(content=b"video-bytes")
+    mock_get_provider.return_value = provider
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "", "prompt": "-v -r 720 a corgi surfing", "user": "alice",
+        "source": "slash",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-R"))
+
+    assert provider.generate.call_args.kwargs["resolution"] == "720p"
+    assert mock_slack.post_video_response.called
+
+
+@patch("ai_slop_bot.slack")
+@patch("ai_slop_bot.providers.get_video_provider")
+def test_bad_video_resolution_never_reaches_the_provider(mock_get_provider, mock_slack):
+    sns_message = {
+        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
+        "thread_ts": "", "prompt": "-v -r 1440 a corgi surfing", "user": "alice",
+        "source": "slash",
+    }
+    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+
+    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-R2"))
+
+    mock_get_provider.assert_not_called()
+    assert "480, 720, or 1080" in mock_slack.post_ephemeral.call_args.args[1]

@@ -89,6 +89,11 @@ def ai_slop_bot(event, context):
             _notify(bufo_error, source=source, response_url=response_url,
                     channel_id=channel_id, thread_ts=thread_ts)
             return
+        resolution_error = _validate_video_resolution(parsed)
+        if resolution_error:
+            _notify(resolution_error, source=source, response_url=response_url,
+                    channel_id=channel_id, thread_ts=thread_ts)
+            return
         source_ref, reference_refs = _collect_media_references(parsed, payload_references)
         validation_error = _validate_media_references(parsed, source_ref, reference_refs)
         if validation_error:
@@ -277,6 +282,9 @@ def ai_slop_bot(event, context):
                 model=_model_for_request("video", backend),
                 cost_estimate=_failure_cost_estimate(
                     "video", backend, duration=parsed.video_duration,
+                    resolution=parsed.video_resolution,
+                    has_references=bool(references or parsed.voices),
+                    video_op=parsed.video_op,
                 ),
                 call=lambda: provider.generate(
                     prompt,
@@ -286,6 +294,7 @@ def ai_slop_bot(event, context):
                     voices=parsed.voices,
                     video_op=parsed.video_op,
                     video_url=video_url,
+                    resolution=parsed.video_resolution,
                 ),
             )
             usage.record_usage(user, result)
@@ -504,12 +513,15 @@ def _model_for_request(mode: str, backend: str, *, image_edit: bool = False) -> 
     return model_config.get_model(mode, backend, image_edit=image_edit)
 
 
-def _failure_cost_estimate(
+def _failure_cost_estimate(  # pylint: disable=too-many-arguments
     mode: str,
     backend: str,
     *,
     duration: int | None = None,
     reference_count: int = 0,
+    resolution: str | None = None,
+    has_references: bool = False,
+    video_op: str | None = None,
 ) -> float:
     """Fallback cost for failed attempts when the provider omits actual cost."""
     if mode == "image":
@@ -519,7 +531,17 @@ def _failure_cost_estimate(
         seconds = duration or int(os.environ.get("VIDEO_DURATION", default_seconds))
         if backend == "gemini":
             seconds = min((4, 6, 8), key=lambda supported: abs(supported - seconds))
-        return seconds * usage.COST_PER_VIDEO.get(backend, 0.0)
+            return seconds * usage.COST_PER_VIDEO.get(backend, 0.0)
+        # Grok's per-second rate scales with resolution, so estimate against the
+        # size it will actually render. Edits and extensions inherit the source
+        # clip's resolution capped at 720p, so estimate at that cap.
+        rendered = (
+            model_config.REFERENCE_MAX_VIDEO_RESOLUTION if video_op
+            else model_config.resolve_video_resolution(
+                resolution, has_references=has_references,
+            )
+        )
+        return seconds * usage.video_cost_per_second(backend, rendered)
     return 0.0
 
 
@@ -574,6 +596,22 @@ def _validate_bufo_mode(parsed) -> str | None:
         f"-bufo cannot be combined with {', '.join(conflicts)}: "
         "bufo mode is single-shot text-only."
     )
+
+
+def _validate_video_resolution(parsed) -> str | None:
+    """Return a user-facing error when -r is unusable for this request."""
+    if parsed.resolution_error:
+        return parsed.resolution_error
+    if not parsed.video_resolution:
+        return None
+    if parsed.mode != "video":
+        return "-r can only be used with -v."
+    if parsed.video_op:
+        # xAI matches the source clip for edits and extensions.
+        return "-r cannot be combined with --edit-video or --extend-video."
+    if _backend_for_mode("video", parsed.backend_override) != "grok":
+        return "-r is only supported on the grok backend; use -b grok."
+    return None
 
 
 def _validate_media_references(parsed, source_ref, reference_refs) -> str | None:
@@ -849,6 +887,10 @@ def main():
         print(bufo.sanitize_bufo_output(result.content, set(names)))
         return
 
+    resolution_error = _validate_video_resolution(parsed)
+    if resolution_error:
+        raise SystemExit(resolution_error)
+
     if parsed.mode == "video":
         source_ref, reference_refs = _collect_media_references(parsed, [])
         validation_error = _validate_media_references(parsed, source_ref, reference_refs)
@@ -869,6 +911,7 @@ def main():
             references=references,
             video_op=parsed.video_op,
             video_url=parsed.video_source_url,
+            resolution=parsed.video_resolution,
         )
         outfile = "/tmp/claude-1000/ai_slop_output.mp4"
         with open(outfile, "wb") as f:

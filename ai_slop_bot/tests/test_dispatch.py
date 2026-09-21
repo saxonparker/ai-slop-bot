@@ -869,3 +869,114 @@ def test_upload_modal_submission_rejects_voices_on_gemini(mock_boto):
     assert body["response_action"] == "errors"
     assert "voices_block" in body["errors"]
     mock_sns.publish.assert_not_called()
+
+
+def test_help_documents_the_resolution_flag():
+    assert "-r 720" in ai_slop_dispatch.HELP_TEXT
+    assert "Resolution drives price" in ai_slop_dispatch.HELP_TEXT
+
+
+@patch.dict("os.environ", {
+    "AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic",
+    "SLACK_BOT_TOKEN": "xoxb-token",
+})
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_keeps_resolution_out_of_the_prefilled_prompt(mock_boto, mock_urlopen):
+    mock_boto.return_value = MagicMock()
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+
+    ai_slop_dispatch.dispatch(
+        _slack_event("-v --upload -r 720 make it move", trigger_id="trig"),
+        None,
+    )
+
+    payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
+    assert blocks["prompt_block"]["element"]["initial_value"] == "make it move"
+    # The form has no resolution picker, so -r rides along in private_metadata.
+    metadata = json.loads(payload["view"]["private_metadata"])
+    assert metadata["resolution"] == "720"
+
+
+def _resolution_submission_payload(resolution, backend="grok"):
+    metadata = {
+        "response_url": "https://hooks.slack.example/dispatch",
+        "channel_id": "C123",
+        "channel_name": "general",
+        "user": "alice",
+        "mode": "video",
+        "resolution": resolution,
+    }
+    return {
+        "type": "view_submission",
+        "view": {
+            "callback_id": "ai_slop_upload",
+            "private_metadata": json.dumps(metadata),
+            "state": {
+                "values": {
+                    "prompt_block": {"prompt": {"value": "make it move"}},
+                    "backend_block": {
+                        "backend": {"selected_option": {"value": backend}}
+                    },
+                    "duration_block": {"duration": {"value": "10"}},
+                    "reference_role_block": {
+                        "reference_role": {"selected_option": {"value": "start"}}
+                    },
+                    "files_block": {"files": {"files": [{"id": "F123"}]}},
+                }
+            },
+        },
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_reattaches_the_resolution_flag(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+    mock_sns.publish.return_value = {"MessageId": "abc"}
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_resolution_submission_payload("720")),
+        None,
+    )
+
+    assert response["statusCode"] == "200"
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    sns_msg = json.loads(inner["default"])
+    assert sns_msg["prompt"] == "-v 10 -r 720 -b grok make it move"
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_omits_an_unset_resolution(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+    mock_sns.publish.return_value = {"MessageId": "abc"}
+
+    ai_slop_dispatch.dispatch(
+        _interaction_request(_resolution_submission_payload("")),
+        None,
+    )
+
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    sns_msg = json.loads(inner["default"])
+    assert sns_msg["prompt"] == "-v 10 -b grok make it move"
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.boto3.client")
+def test_upload_modal_submission_rejects_resolution_on_gemini(mock_boto):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_resolution_submission_payload("720", backend="gemini")),
+        None,
+    )
+
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert "backend_block" in body["errors"]
+    mock_sns.publish.assert_not_called()

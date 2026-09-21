@@ -7,6 +7,8 @@ from decimal import Decimal
 
 import boto3
 
+import model_config
+
 
 class GenerationResult(typing.NamedTuple):
     """Result from a text or image generation backend."""
@@ -45,8 +47,18 @@ TEXT_MODEL_RATES = {
     "grok-4.7": {"input": 2.00, "output": 6.00},
 }
 
+# xAI bills grok-imagine-video-1.5 per second of output, and the rate scales
+# steeply with resolution — 1080p costs ~3x what 480p does. Estimates must use
+# the resolution actually rendered (see model_config.resolve_video_resolution),
+# not the one requested. Actual billed cost still comes from cost_in_usd_ticks
+# when the response carries it. Verified 2026-09-21 against xAI's pricing table.
+GROK_VIDEO_COST_PER_SECOND = {
+    "480p": 0.08,
+    "720p": 0.14,
+    "1080p": 0.25,
+}
+
 COST_PER_VIDEO = {
-    "grok": 0.08,  # grok-imagine-video-1.5, per second of video
     "gemini": 0.10,  # Veo 3.1 Fast @ 720p, per second (incl. audio)
 }
 
@@ -55,6 +67,14 @@ COST_PER_IMAGE = {
     "openai": 0.08,
     "grok": 0.04,  # grok-imagine-image-2.0
 }
+
+
+def video_cost_per_second(backend: str, resolution: str | None = None) -> float:
+    """Per-second video rate for a backend; Grok's varies by resolution."""
+    if backend == "grok":
+        default = GROK_VIDEO_COST_PER_SECOND[model_config.DEFAULT_VIDEO_RESOLUTION]
+        return GROK_VIDEO_COST_PER_SECOND.get(resolution or "", default)
+    return COST_PER_VIDEO.get(backend, 0.0)
 
 TICKS_PER_USD = 10_000_000_000
 ERROR_MESSAGE_MAX = 500

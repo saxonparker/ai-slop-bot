@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 import media_refs
+import model_config
 
 
 # Preset voices are words ("eve"); custom-voice ids are 8-char lowercase
@@ -27,9 +28,14 @@ _LONG_FLAGS = {
     "--ref",
     "--start",
     "--voice",
+    "--resolution",
     "--credit",
     "--bufo",
 }
+_RESOLUTION_HELP = (
+    "Use -r with 480, 720, or 1080 (a trailing \"p\" is fine), for example "
+    "/slop-bot -v -r 720 a corgi surfing."
+)
 
 
 def _normalize_flag_token(token: str) -> str:
@@ -59,6 +65,8 @@ class ParsedCommand:
     report: bool = False
     gallery: bool = False
     video_duration: int | None = None
+    video_resolution: str | None = None
+    resolution_error: str | None = None
     video_op: str | None = None
     video_source_url: str | None = None
     pay_amount: Decimal | None = None
@@ -82,6 +90,8 @@ def parse_command(input_str: str) -> ParsedCommand:
     image_mode = False
     video_mode = False
     video_duration = None
+    video_resolution = None
+    resolution_error = None
     emoji_mode = False
     potato_mode = False
     bufo_mode = False
@@ -132,6 +142,17 @@ def parse_command(input_str: str) -> ParsedCommand:
             if i + 1 < len(tokens):
                 i += 1
                 backend_override = tokens[i].lower()
+        elif lower in ("-r", "--resolution"):
+            resolution = None
+            if i + 1 < len(tokens):
+                i += 1
+                resolution = model_config.normalize_resolution(tokens[i])
+            if resolution:
+                video_resolution = resolution
+            else:
+                # Silently dropping a typo'd resolution would bill the user for
+                # a video at the wrong size, so surface it instead.
+                resolution_error = _RESOLUTION_HELP
         elif lower in ("-pay", "--pay", "-pay-test", "--pay-test"):
             flag = "-pay-test" if lower.endswith("-test") else "-pay"
             pay_flags.add(flag)
@@ -286,6 +307,8 @@ def parse_command(input_str: str) -> ParsedCommand:
         report=report_mode,
         gallery=gallery_mode,
         video_duration=video_duration,
+        video_resolution=video_resolution,
+        resolution_error=resolution_error,
         video_op=video_op,
         video_source_url=video_source_url,
         pay_amount=pay_amount,

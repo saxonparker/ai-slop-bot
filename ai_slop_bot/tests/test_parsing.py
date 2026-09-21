@@ -453,3 +453,43 @@ def test_voice_flag_without_value_falls_back_to_prompt():
     result = parsing.parse_command("-v --voice")
     assert result.voices == []
     assert result.prompt_text == "--voice"
+
+
+def test_resolution_flag_accepts_bare_numbers():
+    result = parsing.parse_command("-v -r 720 a corgi surfing")
+    assert result.mode == "video"
+    assert result.video_resolution == "720p"
+    assert result.resolution_error is None
+    assert result.prompt_text == "a corgi surfing"
+
+
+def test_resolution_flag_accepts_trailing_p_and_long_form():
+    result = parsing.parse_command("-v --resolution 1080p a corgi surfing")
+    assert result.video_resolution == "1080p"
+    assert result.prompt_text == "a corgi surfing"
+
+
+def test_resolution_flag_is_case_insensitive():
+    result = parsing.parse_command("-v -R 480P a corgi surfing")
+    assert result.video_resolution == "480p"
+    assert result.prompt_text == "a corgi surfing"
+
+
+def test_resolution_flag_rejects_unsupported_sizes():
+    result = parsing.parse_command("-v -r 1440 a corgi surfing")
+    assert result.video_resolution is None
+    assert "480, 720, or 1080" in result.resolution_error
+    # A typo must not silently bill a video at the wrong size.
+    assert result.prompt_text == "a corgi surfing"
+
+
+def test_resolution_flag_without_value_reports_an_error():
+    result = parsing.parse_command("-v -r")
+    assert result.video_resolution is None
+    assert result.resolution_error is not None
+
+
+def test_resolution_flag_survives_smart_dashes():
+    result = parsing.parse_command("-v –-resolution 720 a corgi surfing")
+    assert result.video_resolution == "720p"
+    assert result.prompt_text == "a corgi surfing"

@@ -75,7 +75,13 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   The upload form lists xAI's 28 built-in voices (eve, leo, helix, luna, ...); `--voice` also accepts custom voice ids.
   Tag voices in the prompt as `<AUDIO_0>`, `<AUDIO_1>`, `<AUDIO_2>` to control who speaks;
   untagged prompts get the tags appended automatically.
-  Voices and reference images render at 720p; everything else renders at 1080p.
+
+*Video resolution (Grok only):*
+  `{CANONICAL_SLASH_COMMAND} -v -r 720 a corgi surfing` — pick 480, 720, or 1080 (`720p` also works)
+  Defaults to 1080p. Voices and reference images are capped at 720p, so a higher `-r` is clamped.
+  Not accepted with `--edit-video`/`--extend-video`: those match the source clip.
+  Resolution drives price: 480p $0.08/sec, 720p $0.14/sec, 1080p $0.25/sec.
+  A 10s clip runs $0.80 at 480p versus $2.50 at 1080p, so drop `-r` to spend less.
 
 *Conversations:*
   `{CANONICAL_SLASH_COMMAND} -c <prompt>` starts a multi-turn text conversation rooted in a
@@ -112,6 +118,7 @@ _LONG_FLAGS = {
     "--ref",
     "--start",
     "--voice",
+    "--resolution",
     "--credit",
     "--bufo",
 }
@@ -421,6 +428,7 @@ def _parse_upload_command(prompt: str) -> dict:
     tokens = prompt.split()
     mode = "text"
     duration = ""
+    resolution = ""
     backend = ""
     video_op = "generate"
     video_url = ""
@@ -453,6 +461,10 @@ def _parse_upload_command(prompt: str) -> dict:
         elif lower == "-b" and i + 1 < len(tokens):
             i += 1
             backend = tokens[i].lower()
+        elif lower in ("-r", "--resolution") and i + 1 < len(tokens):
+            # Carried through the modal untouched; the bot Lambda validates it.
+            i += 1
+            resolution = tokens[i].lower()
         elif lower in ("--ref", "--start") and i + 1 < len(tokens):
             i += 1
         elif lower == "--voice" and i + 1 < len(tokens):
@@ -464,6 +476,7 @@ def _parse_upload_command(prompt: str) -> dict:
     return {
         "mode": mode,
         "duration": duration,
+        "resolution": resolution,
         "backend": backend,
         "video_op": video_op,
         "video_url": video_url,
@@ -481,6 +494,9 @@ def _open_upload_modal(params: dict, upload_options: dict):
         "channel_name": params.get("channel_name", ""),
         "user": params.get("user_name", ""),
         "mode": mode,
+        # The form has no resolution picker, so keep -r in metadata where it
+        # survives modal rebuilds and can be re-attached on submission.
+        "resolution": upload_options.get("resolution", ""),
     }
     payload = {
         "trigger_id": params["trigger_id"],
@@ -715,6 +731,7 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     prompt = (_state_value(state, "prompt_block", "prompt").get("value") or "").strip()
     backend = _selected_value(_state_value(state, "backend_block", "backend"))
     duration = (_state_value(state, "duration_block", "duration").get("value") or "").strip()
+    resolution = (metadata.get("resolution") or "").strip()
     video_op = _selected_value(_state_value(state, "video_op_block", "video_op"))
     video_url = (_state_value(state, "video_url_block", "video_url").get("value") or "").strip()
     source_video_refs = _file_refs(_state_value(state, "source_video_block", "source_video"))
@@ -743,6 +760,10 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
         errors["files_block"] = "Start-frame video accepts exactly one image."
     if voices and backend == "gemini":
         errors["voices_block"] = "Voices are only supported on the grok backend."
+    if resolution and backend == "gemini":
+        errors["backend_block"] = "-r is only supported on the grok backend."
+    if resolution and is_video_source_op:
+        errors["video_op_block"] = "-r cannot be combined with Edit or Extend."
     if duration:
         try:
             int(duration)
@@ -754,6 +775,8 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
     command_parts = ["-i" if mode == "image" else "-v"]
     if duration and mode == "video":
         command_parts.append(duration)
+    if resolution and mode == "video":
+        command_parts.extend(["-r", resolution])
     if backend:
         command_parts.extend(["-b", backend])
     for voice in voices:

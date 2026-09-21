@@ -603,7 +603,8 @@ def test_grok_video_generate(mock_requests):
     assert result.content == fake_bytes
     assert result.backend == "grok"
     assert result.model == "grok-imagine-video-1.5"
-    assert result.cost_estimate == 8 * 0.08
+    # Default render is 1080p, which xAI bills at $0.25/sec.
+    assert result.cost_estimate == 8 * 0.25
     assert result.cost_actual == 0.56
     assert result.cost_in_usd_ticks == 5600000000
     # Default duration (10) should be sent in request
@@ -727,7 +728,7 @@ def test_grok_video_custom_duration(mock_requests):
     with patch("backends.grok_video.time.sleep"):
         result = GrokProvider().generate("a dancing cat", duration=5)
 
-    assert result.cost_estimate == 5 * 0.08
+    assert result.cost_estimate == 5 * 0.25
     post_kwargs = mock_requests.post.call_args
     assert post_kwargs.kwargs["json"]["duration"] == 5
 
@@ -1057,7 +1058,7 @@ def test_grok_video_moderation_failure_is_classified(mock_requests):
     assert exc_info.value.error_type == "moderation"
     assert "flagged by content moderation" in exc_info.value.user_message
     assert exc_info.value.cost_actual == 0.05
-    assert exc_info.value.cost_estimate == 10 * 0.08
+    assert exc_info.value.cost_estimate == 10 * 0.25
 
 
 # ── Gemini Video (Veo) ───────────────────────────────────────────────────────
@@ -1250,3 +1251,184 @@ def test_grok_image_edit_rejects_six_references(mock_requests):
     with pytest.raises(ValueError, match="at most 5 reference images"):
         GrokProvider().generate("composite these", references=refs)
     mock_requests.post.assert_not_called()
+
+
+# ── Grok Video: -r resolution flag ───────────────────────────────────────────
+
+@pytest.mark.parametrize("resolution", ["480p", "720p", "1080p"])
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_resolution_reaches_the_api(mock_requests, resolution):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("a corgi surfing", resolution=resolution)
+
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == resolution
+
+
+@patch.dict(
+    "os.environ",
+    {"XAI_API_KEY": "fake-key", "VIDEO_RESOLUTION": "480p"},
+    clear=True,
+)
+@patch("backends.grok_video.requests")
+def test_grok_video_resolution_argument_beats_env_default(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("a corgi surfing", resolution="1080p")
+
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == "1080p"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_resolution_still_clamped_by_references(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    refs = [
+        ResolvedImage(data=b"ref", mime_type="image/jpeg",
+                      original_url="https://example.com/a.jpg"),
+    ]
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("combine", references=refs, resolution="1080p")
+
+    # xAI caps reference-to-video at 720p, so an explicit -r 1080 is clamped.
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == "720p"
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_resolution_below_cap_survives_references(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    refs = [
+        ResolvedImage(data=b"ref", mime_type="image/jpeg",
+                      original_url="https://example.com/a.jpg"),
+    ]
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate("combine", references=refs, resolution="480p")
+
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == "480p"
+
+
+@pytest.mark.parametrize("video_op", ["edit", "extend"])
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_edit_and_extend_reject_a_resolution(mock_requests, video_op):
+    from backends.grok_video import GrokProvider
+
+    with pytest.raises(ValueError, match="does not accept a resolution"):
+        GrokProvider().generate(
+            "restyle this",
+            video_op=video_op,
+            video_url="https://cdn.example/source.mp4",
+            resolution="480p",
+        )
+    mock_requests.post.assert_not_called()
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_edit_without_resolution_omits_the_field(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests)
+    with patch("backends.grok_video.time.sleep"):
+        GrokProvider().generate(
+            "restyle this",
+            video_op="edit",
+            video_url="https://cdn.example/source.mp4",
+        )
+
+    assert "resolution" not in mock_requests.post.call_args.kwargs["json"]
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}, clear=True)
+def test_gemini_video_rejects_a_resolution():
+    from backends.gemini_video import GeminiProvider
+
+    with pytest.raises(ValueError, match="only supported on the grok backend"):
+        GeminiProvider().generate("a corgi surfing", resolution="720p")
+
+
+@pytest.mark.parametrize(
+    ("resolution", "rate"),
+    [("480p", 0.08), ("720p", 0.14), ("1080p", 0.25)],
+)
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_cost_scales_with_resolution(mock_requests, resolution, rate):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests, duration=10)
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate("a corgi surfing", resolution=resolution)
+
+    assert result.cost_estimate == pytest.approx(10 * rate)
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_clamped_request_is_billed_at_the_clamped_rate(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests, duration=10)
+    refs = [
+        ResolvedImage(data=b"ref", mime_type="image/jpeg",
+                      original_url="https://example.com/a.jpg"),
+    ]
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate("combine", references=refs, resolution="1080p")
+
+    # References force a 720p render, so the user must be billed the 720p rate
+    # rather than the 1080p rate they asked for.
+    assert mock_requests.post.call_args.kwargs["json"]["resolution"] == "720p"
+    assert result.cost_estimate == pytest.approx(10 * 0.14)
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_edit_is_billed_at_the_720p_cap(mock_requests):
+    from backends.grok_video import GrokProvider
+
+    _grok_video_mocks(mock_requests, duration=10)
+    with patch("backends.grok_video.time.sleep"):
+        result = GrokProvider().generate(
+            "restyle this",
+            video_op="edit",
+            video_url="https://cdn.example/source.mp4",
+        )
+
+    # Edits inherit the source resolution capped at 720p; estimate at the cap.
+    assert result.cost_estimate == pytest.approx(10 * 0.14)
+
+
+@pytest.mark.parametrize(
+    ("resolution", "rate"),
+    [("480p", 0.08), ("720p", 0.14), ("1080p", 0.25)],
+)
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"}, clear=True)
+@patch("backends.grok_video.requests")
+def test_grok_video_http_failure_estimate_uses_the_resolution(
+    mock_requests, resolution, rate,
+):
+    from backends.grok_video import GrokProvider
+
+    response = MagicMock(status_code=500)
+    response.json.return_value = {}
+    error = requests.HTTPError("boom", response=response)
+    mock_submit = MagicMock()
+    mock_submit.raise_for_status.side_effect = error
+    mock_requests.post.return_value = mock_submit
+    mock_requests.HTTPError = requests.HTTPError
+
+    with pytest.raises(ProviderGenerationError) as exc_info:
+        GrokProvider().generate("a corgi surfing", duration=10, resolution=resolution)
+
+    assert exc_info.value.cost_estimate == pytest.approx(10 * rate)

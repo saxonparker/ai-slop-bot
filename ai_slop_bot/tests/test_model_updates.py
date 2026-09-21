@@ -216,3 +216,100 @@ def test_sol_long_context_pricing():
 @pytest.mark.parametrize("api_usage", [None, SimpleNamespace(output_tokens=1000)])
 def test_image_cost_falls_back_when_usage_is_missing(api_usage):
     assert usage.estimate_openai_image_cost("gpt-image-2.5-flare", api_usage) == 0.08
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("480", "480p"), ("720", "720p"), ("1080", "1080p"),
+        ("480p", "480p"), ("720P", "720p"), (" 1080p ", "1080p"),
+    ],
+)
+def test_normalize_resolution_canonicalizes_supported_sizes(value, expected):
+    assert model_config.normalize_resolution(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, "", "1440", "4k", "720px", "p", "-720"])
+def test_normalize_resolution_rejects_unsupported_sizes(value):
+    assert model_config.normalize_resolution(value) is None
+
+
+def test_video_resolutions_are_ordered_low_to_high():
+    # grok_video clamps by index, so the ordering is load-bearing.
+    assert model_config.VIDEO_RESOLUTIONS == ("480p", "720p", "1080p")
+    assert model_config.DEFAULT_VIDEO_RESOLUTION in model_config.VIDEO_RESOLUTIONS
+
+
+@pytest.mark.parametrize(
+    ("resolution", "rate"),
+    [("480p", 0.08), ("720p", 0.14), ("1080p", 0.25)],
+)
+def test_grok_video_rate_scales_with_resolution(resolution, rate):
+    assert usage.video_cost_per_second("grok", resolution) == rate
+
+
+def test_grok_video_rate_defaults_to_the_default_resolution():
+    # An unknown or missing resolution must not silently bill at the cheap tier.
+    default_rate = usage.GROK_VIDEO_COST_PER_SECOND[model_config.DEFAULT_VIDEO_RESOLUTION]
+    assert usage.video_cost_per_second("grok") == default_rate
+    assert usage.video_cost_per_second("grok", "4k") == default_rate
+
+
+def test_every_video_resolution_has_a_rate():
+    assert set(usage.GROK_VIDEO_COST_PER_SECOND) == set(model_config.VIDEO_RESOLUTIONS)
+
+
+@pytest.mark.parametrize(
+    ("requested", "has_references", "expected"),
+    [
+        (None, False, "1080p"),
+        ("480p", False, "480p"),
+        ("1080p", True, "720p"),
+        ("480p", True, "480p"),
+        (None, True, "720p"),
+    ],
+)
+def test_resolve_video_resolution_applies_the_reference_cap(
+    requested, has_references, expected,
+):
+    resolved = model_config.resolve_video_resolution(
+        requested, has_references=has_references,
+    )
+    assert resolved == expected
+
+
+@pytest.mark.parametrize(
+    ("resolution", "rate"),
+    [("480p", 0.08), ("720p", 0.14), ("1080p", 0.25)],
+)
+def test_failure_estimate_uses_the_requested_resolution(resolution, rate):
+    estimate = ai_slop_bot._failure_cost_estimate(
+        "video", "grok", duration=10, resolution=resolution,
+    )
+    assert estimate == pytest.approx(10 * rate)
+
+
+def test_failure_estimate_applies_the_reference_clamp():
+    estimate = ai_slop_bot._failure_cost_estimate(
+        "video", "grok", duration=10, resolution="1080p", has_references=True,
+    )
+    assert estimate == pytest.approx(10 * 0.14)
+
+
+@pytest.mark.parametrize("video_op", ["edit", "extend"])
+def test_failure_estimate_for_edit_and_extend_uses_the_720p_cap(video_op):
+    estimate = ai_slop_bot._failure_cost_estimate(
+        "video", "grok", duration=10, video_op=video_op,
+    )
+    assert estimate == pytest.approx(10 * 0.14)
+
+
+def test_failure_estimate_matches_the_backend_estimate():
+    # The pre-flight estimate and the backend's own estimate must agree, or a
+    # failed request is recorded at a different price than a successful one.
+    from backends.grok_video import _resolution_for
+
+    rendered = _resolution_for([], [], "720p")
+    assert ai_slop_bot._failure_cost_estimate(
+        "video", "grok", duration=10, resolution="720p",
+    ) == pytest.approx(10 * usage.video_cost_per_second("grok", rendered))

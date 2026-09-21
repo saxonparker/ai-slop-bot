@@ -19,6 +19,7 @@ slash-command payloads to the `/ai-slop` HTTP route during deployment.
 - `/slop-bot -i -b openai <prompt>` — image with a specific backend
 - `/slop-bot -v -b grok <prompt>` — video with a specific backend
 - `/slop-bot -v -b gemini <prompt>` — video with Veo (native audio/dialogue)
+- `/slop-bot -v -r 720 <prompt>` — video at a chosen resolution (Grok only)
 
 Slack does not allow slash commands inside threads, so conversation
 follow-ups are made by `@`-mentioning the bot in the thread instead.
@@ -43,6 +44,7 @@ Flags can appear in any order unless a flag consumes the next value.
 - `--ref <image-url>` — add an image reference. Repeat for multiple references.
 - `--start <image-url>` — use an image URL as the start frame for a video.
 - `--voice <voice-id>` — add a preset voice to a Grok video. Repeat for up to 3 voices.
+- `-r <resolution>`, `--resolution <resolution>` — Grok video output resolution. Accepts `480`, `720`, `1080`, or the same values with a trailing `p`. Billed per second at a rate that scales with resolution, so this is also a spend control.
 - `--edit-video <video-url>` — edit an existing video (Grok only).
 - `--extend-video <video-url>` — extend a video from its last frame (Grok only).
 - `--report` (`-report` is also accepted) — admin-only balance report; the caller must be listed in `ADMIN_USERS`.
@@ -106,9 +108,37 @@ bare `--voice eve` still produces narration.
 
 ### Video resolution
 
-Grok video renders at 1080p by default, overridable with `VIDEO_RESOLUTION`.
-xAI caps reference-guided generation at 720p, so requests using reference images
-or voices are clamped to 720p automatically.
+Grok video renders at 1080p by default. Pick a different size per request with
+`-r` (or `--resolution`), which accepts `480`, `720`, and `1080`, with or without
+a trailing `p`:
+
+```text
+/slop-bot -v -r 720 a corgi surfing
+```
+
+`-r` overrides the deployment-wide `VIDEO_RESOLUTION` default. xAI caps
+reference-guided generation at 720p, so requests using reference images or
+voices are clamped to 720p automatically even when `-r 1080` is passed.
+
+`-r` is rejected rather than ignored where xAI cannot honor it: on `-b gemini`,
+on non-video requests, and with `--edit-video`/`--extend-video` (those match the
+source clip's resolution, capped at 720p).
+
+Resolution drives cost. xAI bills `grok-imagine-video-1.5` per second at a rate
+that scales steeply with output size, so `-r` is also a spend control:
+
+| Resolution | Rate | 10-second clip |
+|---|---|---|
+| `480p` | $0.08 / sec | $0.80 |
+| `720p` | $0.14 / sec | $1.40 |
+| `1080p` (default) | $0.25 / sec | $2.50 |
+
+Estimates are computed against the resolution xAI actually renders, not the one
+requested — a `-r 1080` request clamped to 720p by reference images is estimated
+at the 720p rate. Video edit/extend inherits the source clip's resolution capped
+at 720p, and the request never states it, so those are estimated at that cap.
+Recorded actual cost still comes from the response's `cost_in_usd_ticks` when
+present; these rates are the pre-flight and failed-attempt estimates.
 
 ## Conversations
 
@@ -352,7 +382,7 @@ is promotional through at least November 21, 2026; recheck rates on later review
 | `IMAGE_MODEL` | backend default | Image model override for the selected image backend |
 | `VIDEO_MODEL` | backend default | Video model override for the selected video backend |
 | `VIDEO_DURATION` | Grok `10`, Gemini `8` | Default video length when `-v` does not include seconds |
-| `VIDEO_RESOLUTION` | `1080p` | Grok output resolution (`480p`, `720p`, `1080p`); clamped to `720p` when references or voices are used |
+| `VIDEO_RESOLUTION` | `1080p` | Default Grok output resolution (`480p`, `720p`, `1080p`) when `-r` is not given; clamped to `720p` when references or voices are used |
 | `ANTHROPIC_API_KEY` | — | Required if using anthropic backend |
 | `GOOGLE_API_KEY` | — | Required if using gemini backends |
 | `GROK_IMAGE_EDIT_TIMEOUT_SECONDS` | `180` | Timeout for Grok image edit requests |

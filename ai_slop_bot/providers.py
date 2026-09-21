@@ -31,6 +31,7 @@ class VideoProvider(Protocol):
         voices: list | None = None,
         video_op: str | None = None,
         video_url: str | None = None,
+        resolution: str | None = None,
     ) -> GenerationResult: ...
 
 
