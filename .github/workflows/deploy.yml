@@ -19,7 +19,7 @@ jobs:
       - name: Install test dependencies
         run: |
           cd ai_slop_bot
-          pip install anthropic google-genai openai requests boto3 pillow pytest
+          pip install anthropic google-genai openai requests boto3 pillow pytest imageio-ffmpeg==0.6.0
 
       - name: Run tests
         run: |
@@ -63,6 +63,36 @@ jobs:
           pipenv install
           make ai_slop_bot.zip
 
+      - name: Verify bot package and FFmpeg in Lambda runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          total = 0
+          for name in ("ai_slop_bot.zip", "ffmpeg_layer.zip"):
+              path = Path("ai_slop_bot") / name
+              with zipfile.ZipFile(path) as archive:
+                  total += sum(info.file_size for info in archive.infolist())
+              print(f"{name}: {path.stat().st_size / 1024**2:.1f} MiB compressed")
+              assert path.stat().st_size < 50 * 1024**2, "Lambda direct upload exceeds 50 MiB"
+          print(f"Combined package: {total / 1024**2:.1f} MiB uncompressed")
+          assert total < 250 * 1024**2, "Lambda package plus layers exceeds 250 MiB"
+          PY
+          unzip -q ai_slop_bot/ai_slop_bot.zip -d /tmp/ai-slop-package
+          unzip -q ai_slop_bot/ffmpeg_layer.zip -d /tmp/ai-slop-ffmpeg
+          docker run --rm --memory 512m --entrypoint python \
+            --volume /tmp/ai-slop-package:/var/task:ro \
+            --volume /tmp/ai-slop-ffmpeg:/opt:ro \
+            --volume "$PWD/ai_slop_bot/tests/thumbnail_smoke.py:/tmp/thumbnail_smoke.py:ro" \
+            --env PYTHONPATH=/var/task:/opt/python \
+            public.ecr.aws/lambda/python:3.12 /tmp/thumbnail_smoke.py
+
+      - name: Upload FFmpeg layer zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-layer-zip
+          path: ai_slop_bot/ffmpeg_layer.zip
+
       - name: Upload dispatch zip
         uses: actions/upload-artifact@v4
         with:
@@ -95,6 +125,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: bot-zip
+          path: ai_slop_bot
+
+      - name: Download FFmpeg layer zip
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-layer-zip
           path: ai_slop_bot
 
       - uses: hashicorp/setup-terraform@v3

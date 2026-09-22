@@ -8,13 +8,14 @@ for Slack link previews.
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
 import urllib.parse
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 BUCKET = "dallepics"
@@ -79,6 +80,18 @@ def media_file_url(key):
     return f"{CLOUDFRONT}/{urllib.parse.quote(key)}"
 
 
+def thumbnail_key(key):
+    """Stable, short S3 keys even for long Unicode prompts and nested paths.
+
+    player.html uses the same SHA-256 of the full, decoded media key.
+    Keeping the original extension in the hash prevents mp4/mov collisions.
+    """
+    validate_key(key)
+    if not key.lower().endswith(VIDEO_EXTENSIONS):
+        raise ValueError("Thumbnails are only generated for gallery videos.")
+    return "thumbnails/" + hashlib.sha256(key.encode("utf-8")).hexdigest() + ".jpg"
+
+
 def title_from_key(key):
     """Match the gallery's titleFromKey: drop the prefix, extension, and random tag."""
     name = key[len(MEDIA_PREFIX):]
@@ -93,20 +106,31 @@ def title_from_key(key):
 
 def media_details(key):
     """Describe gallery media for Slack previews, or None if S3 can't serve it."""
+    s3_client = boto3.client("s3")
     try:
-        head = boto3.client("s3").head_object(Bucket=BUCKET, Key=validate_key(key))
+        head = s3_client.head_object(Bucket=BUCKET, Key=validate_key(key))
     except ClientError as exc:
         # Without s3:ListBucket, S3 reports a missing key as 403 instead of 404.
         print(f"GALLERY MEDIA LOOKUP ERROR: {key}: {exc}")
         return None
     metadata = head.get("Metadata") or {}
-    return {
+    details = {
         "key": key,
         "title": title_from_key(key),
         "video": key.lower().endswith(VIDEO_EXTENSIONS),
         "user": metadata.get("user", ""),
         "channel": metadata.get("channel", ""),
     }
+    if details["video"]:
+        details["thumbnail_url"] = VIDEO_POSTER_URL
+        try:
+            poster_key = thumbnail_key(key)
+            s3_client.head_object(Bucket=BUCKET, Key=poster_key)
+            details["thumbnail_url"] = media_file_url(poster_key)
+        except (BotoCoreError, ClientError) as exc:
+            # Old videos and failed extractions keep the generic poster.
+            print(f"VIDEO THUMBNAIL LOOKUP: {key}: {exc}")
+    return details
 
 
 def _media_table():

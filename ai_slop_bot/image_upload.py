@@ -9,6 +9,8 @@ import urllib.parse
 import boto3
 from PIL import Image
 
+import video_thumbnails
+
 BUCKET = "dallepics"
 DEFAULT_PREFIX = "dalle"
 SOURCE_VIDEO_PREFIX = "source-videos"
@@ -84,6 +86,9 @@ def upload_to_s3(
     s3_client.upload_fileobj(compressed, BUCKET, s3_key,
                              ExtraArgs={"ContentType": content_type,
                                         "Metadata": metadata})
+
+    if prefix == DEFAULT_PREFIX and extension in ("mp4", "mov", "webm"):
+        video_thumbnails.try_upload_thumbnail(s3_client, s3_key, file_bytes)
 
     if add_to_manifest and (user or channel or model):
         try:

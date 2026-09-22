@@ -365,3 +365,36 @@ test('the Slack player page plays only gallery videos', async t => {
   assert.equal(await page.locator('video').getAttribute('src'), null);
   assert.deepEqual(errors, []);
 });
+
+for (const hasThumbnail of [true, false]) {
+  test(`the Slack player ${hasThumbnail ? 'loads the video thumbnail' : 'keeps its poster when no thumbnail exists'}`, async t => {
+    const context = await browser.newContext();
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const thumbnail = cloudFrontOrigin + '/thumbnails/e2b4f9f5f752ab4c5f13905f3503fec791aca407d66d9ea17f1ac500eecb9745.jpg';
+    const poster = cloudFrontOrigin + '/video-poster.png';
+    const requestedThumbnails = [];
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/*', route => {
+      const url = route.request().url();
+      if (new URL(url).pathname === '/player.html') {
+        return route.fulfill({contentType: 'text/html', body: fs.readFileSync(path.join(__dirname, '..', 'player.html'), 'utf8')});
+      }
+      if (url.includes('/thumbnails/')) {
+        requestedThumbnails.push(url);
+        if (!hasThumbnail) return route.fulfill({status: 404, body: ''});
+      }
+      if (url.endsWith('.mp4')) return route.fulfill({contentType: 'video/mp4', body: ''});
+      return route.fulfill({contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="red"/></svg>'});
+    });
+    const fetched = page.waitForResponse(thumbnail);
+    await page.goto(cloudFrontOrigin + '/player.html?item=AC%2FDC_%F0%9F%8F%86_ABC.mp4');
+    await fetched;
+    const expected = hasThumbnail ? thumbnail : poster;
+    await page.waitForFunction(url => document.querySelector('video').poster === url, expected);
+    assert.equal(await page.locator('video').evaluate(el => el.src), cloudFrontOrigin + '/dalle/AC/DC_%F0%9F%8F%86_ABC.mp4');
+    assert.deepEqual(requestedThumbnails, [thumbnail]);
+    assert.deepEqual(errors, []);
+  });
+}

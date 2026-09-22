@@ -280,9 +280,10 @@ longer a pick. Links to deleted items open the gallery with a notice.
 
 Pasting a gallery link into Slack previews it:
 - Photos show the image.
-- Videos show an inline player: `player.html` behind the generic
-  `video-poster.png` thumbnail. If Slack rejects the embed, the bot posts a
-  title card instead.
+- Videos show an inline player with a frame from the video as its thumbnail.
+  Both `player.html` and Slack's preview use the same JPEG. If extraction failed
+  or an older video has not been backfilled, they use `video-poster.png`.
+  If Slack rejects the embed, the bot posts a title card with the same thumbnail.
 - Direct CloudFront media URLs (`…/dalle/…`) preview the same way.
 - The Hall of Fame message shortcut also accepts messages that share a
   permalink.
@@ -290,6 +291,34 @@ Pasting a gallery link into Slack previews it:
 The bot handles Slack's `link_shared` event and replies with `chat.unfurl`
 (see [Unfurling links in messages](https://docs.slack.dev/messaging/unfurling-links-in-messages/)).
 This needs the Slack app settings in [First-time setup](#first-time-setup).
+
+The bot Lambda loads FFmpeg from a layer containing the pinned `imageio-ffmpeg`
+wheel. The normal bot `make` builds both `ai_slop_bot.zip` and `ffmpeg_layer.zip`,
+keeping each below Lambda's 50 MiB direct-upload limit. New
+gallery video uploads extract a frame at 1 second (the first frame for clips
+shorter than that), fit it within 640×640, and save a JPEG at
+`thumbnails/<SHA-256 of the full decoded dalle/... key>.jpg`. The separate prefix
+keeps posters out of the gallery listing. Extraction has a 10-second deadline;
+failures are logged and the original video still uploads/posts. Source videos
+temporarily staged for editing do not get thumbnails. The deployment build
+checks the Lambda package size and runs real extraction in the Python 3.12
+Lambda base image. No new Slack settings or link parameters are needed.
+
+Backfill existing videos with the same decoder and AWS credentials that can
+list the bucket, read videos, and read/write `thumbnails/`:
+
+```bash
+cd ai_slop_bot
+pipenv install
+pipenv run python backfill_video_thumbnails.py              # dry run
+pipenv run python backfill_video_thumbnails.py --apply --limit 10
+pipenv run python backfill_video_thumbnails.py --apply       # remaining videos
+```
+
+The script skips existing posters and exits nonzero if any item fails. Use
+`--key 'dalle/example_ABC.mp4'` to target a single video. Existing gallery links
+then use the thumbnail when shared again; previously posted Slack previews
+are not rewritten. CloudFront may briefly cache a missing poster response.
 
 The **Hall of Fame** tab collects community favorites. Anyone with the gallery
 link can use the trophy control on a photo or video to add it, or remove it

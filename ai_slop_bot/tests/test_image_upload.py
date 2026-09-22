@@ -98,3 +98,34 @@ def test_upload_to_s3_can_use_source_video_prefix_without_manifest(mock_boto_cli
     assert mock_s3.upload_fileobj.call_args.args[2].startswith("source-videos/")
     mock_s3.get_object.assert_not_called()
     mock_s3.put_object.assert_not_called()
+
+
+@patch("image_upload.boto3.client")
+def test_gallery_video_upload_creates_a_poster_under_its_actual_random_key(mock_boto_client):
+    mock_s3 = mock_boto_client.return_value
+    with patch("video_thumbnails.extract_thumbnail", return_value=b"jpeg"), \
+            patch("image_upload._update_manifest") as manifest:
+        image_upload.upload_to_s3("test", b"video", extension="mp4", user="alice")
+    import hall_of_fame
+    key = mock_s3.upload_fileobj.call_args.args[2]
+    assert mock_s3.put_object.call_args.kwargs["Key"] == hall_of_fame.thumbnail_key(key)
+    assert mock_s3.put_object.call_args.kwargs["Body"] == b"jpeg"
+    manifest.assert_called_once_with(mock_s3, key, "alice", "", "")
+
+
+@patch("image_upload.boto3.client")
+def test_thumbnail_failure_does_not_interrupt_video_upload_or_manifest(mock_boto_client):
+    with patch("video_thumbnails.extract_thumbnail", side_effect=RuntimeError("decoder failed")), \
+            patch("image_upload._update_manifest") as manifest:
+        url = image_upload.upload_to_s3("test", b"video", extension="mp4", user="alice")
+    assert url.endswith(".mp4")
+    mock_boto_client.return_value.upload_fileobj.assert_called_once()
+    manifest.assert_called_once()
+
+
+@patch("image_upload.boto3.client")
+def test_source_videos_and_images_do_not_invoke_ffmpeg(mock_boto_client):
+    with patch("video_thumbnails.try_upload_thumbnail") as thumbnail:
+        image_upload.upload_to_s3("test", _make_test_image_bytes())
+        image_upload.upload_to_s3("source", b"video", extension="mp4", s3_prefix="source-videos")
+    thumbnail.assert_not_called()

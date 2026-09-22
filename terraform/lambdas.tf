@@ -56,6 +56,7 @@ resource "aws_iam_role_policy" "bot_s3" {
       Resource = [
         "arn:aws:s3:::dallepics/dalle/*",
         "arn:aws:s3:::dallepics/source-videos/*",
+        "arn:aws:s3:::dallepics/thumbnails/*",
       ]
     }]
   })
@@ -110,6 +111,15 @@ resource "aws_lambda_function" "dispatch" {
   }
 }
 
+resource "aws_lambda_layer_version" "ffmpeg" {
+  layer_name               = "ai-slop-ffmpeg"
+  description              = "Pinned imageio-ffmpeg 0.6.0 decoder for gallery video thumbnails"
+  filename                 = var.ffmpeg_zip_path
+  source_code_hash         = filebase64sha256(var.ffmpeg_zip_path)
+  compatible_runtimes      = ["python3.12"]
+  compatible_architectures = ["x86_64"]
+}
+
 resource "aws_lambda_function" "bot" {
   function_name    = "ai-slop-bot"
   role             = aws_iam_role.bot.arn
@@ -119,6 +129,7 @@ resource "aws_lambda_function" "bot" {
   memory_size      = 512
   filename         = var.bot_zip_path
   source_code_hash = filebase64sha256(var.bot_zip_path)
+  layers           = [aws_lambda_layer_version.ffmpeg.arn]
 
   environment {
     variables = {

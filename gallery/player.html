@@ -17,8 +17,21 @@
     // ?item=<S3 key without the "dalle/" prefix>, as in gallery permalinks.
     var slug = new URLSearchParams(location.search).get('item') || '';
     if (/\.(mp4|mov|webm)$/i.test(slug)) {
-        document.querySelector('video').src = 'https://d2jagmvo7k5q5j.cloudfront.net/dalle/' +
+        var video = document.querySelector('video');
+        var origin = 'https://d2jagmvo7k5q5j.cloudfront.net';
+        video.poster = origin + '/video-poster.png';
+        video.src = origin + '/dalle/' +
             slug.split('/').map(encodeURIComponent).join('/');
+        // Match hall_of_fame.thumbnail_key: hash the full decoded S3 key.
+        // Probe the JPEG first so old videos retain a working generic poster.
+        crypto.subtle.digest('SHA-256', new TextEncoder().encode('dalle/' + slug)).then(function(hash) {
+            var hex = Array.from(new Uint8Array(hash), function(byte) {
+                return byte.toString(16).padStart(2, '0');
+            }).join('');
+            var poster = new Image();
+            poster.onload = function() { video.poster = poster.src; };
+            poster.src = origin + '/thumbnails/' + hex + '.jpg';
+        }).catch(function() { /* Keep the generic poster if hashing is unavailable. */ });
     }
     </script>
 </body>

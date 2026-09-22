@@ -106,7 +106,11 @@ def test_dispatch_ignores_links_it_cannot_preview():
 def s3(monkeypatch):
     monkeypatch.setenv("SLACK_BOT_TOKEN", "test-token")
     with patch("hall_of_fame.boto3.client") as client:
-        client.return_value.head_object.return_value = {"Metadata": {"user": "bob", "channel": "videos"}}
+        def head_object(**kwargs):
+            if kwargs["Key"].startswith("thumbnails/"):
+                raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+            return {"Metadata": {"user": "bob", "channel": "videos"}}
+        client.return_value.head_object.side_effect = head_object
         yield client.return_value
 
 
@@ -146,7 +150,10 @@ def test_photos_unfurl_as_images_and_videos_as_inline_players(s3):
 
 
 def test_rejected_video_embed_falls_back_to_an_escaped_card(s3):
-    s3.head_object.return_value = {"Metadata": {"user": "<!channel> & co", "channel": "videos"}}
+    s3.head_object.side_effect = [
+        {"Metadata": {"user": "<!channel> & co", "channel": "videos"}},
+        ClientError({"Error": {"Code": "404"}}, "HeadObject"),
+    ]
     with patch("slack.requests.post") as post:
         post.return_value.json.side_effect = [{"ok": False, "error": "invalid_blocks"}, {"ok": True}]
         ai_slop_bot.ai_slop_bot(shared(VIDEO_LINK), None)
@@ -155,6 +162,29 @@ def test_rejected_video_embed_falls_back_to_an_escaped_card(s3):
     [section] = card["unfurls"][VIDEO_LINK]["blocks"]
     assert section["text"]["text"] == f"*<{VIDEO_LINK}|surfing dog>*\nVideo by &lt;!channel&gt; &amp; co in #videos"
     assert section["accessory"]["image_url"] == hall_of_fame.VIDEO_POSTER_URL
+
+
+def test_generated_thumbnail_is_used_for_both_video_embed_and_fallback_card(s3):
+    s3.head_object.side_effect = None
+    s3.head_object.return_value = {"Metadata": {"user": "bob", "channel": "videos"}}
+    with patch("slack.requests.post") as post:
+        post.return_value.json.side_effect = [{"ok": False, "error": "invalid_blocks"}, {"ok": True}]
+        ai_slop_bot.ai_slop_bot(shared(VIDEO_LINK), None)
+    embed, card = unfurl_requests(post)
+    expected = hall_of_fame.media_file_url(hall_of_fame.thumbnail_key(VIDEO))
+    assert embed["unfurls"][VIDEO_LINK]["blocks"][0]["thumbnail_url"] == expected
+    assert card["unfurls"][VIDEO_LINK]["blocks"][0]["accessory"]["image_url"] == expected
+
+
+def test_thumbnail_access_failure_keeps_video_preview(s3):
+    s3.head_object.side_effect = [
+        {"Metadata": {}}, ClientError({"Error": {"Code": "403"}}, "HeadObject"),
+    ]
+    with patch("slack.requests.post") as post:
+        post.return_value.json.return_value = {"ok": True}
+        ai_slop_bot.ai_slop_bot(shared(VIDEO_LINK), None)
+    [request] = unfurl_requests(post)
+    assert request["unfurls"][VIDEO_LINK]["blocks"][0]["thumbnail_url"] == hall_of_fame.VIDEO_POSTER_URL
 
 
 def test_photo_unfurl_failures_are_logged_without_retrying(s3):

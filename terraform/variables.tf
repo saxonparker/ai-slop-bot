@@ -58,6 +58,12 @@ variable "video_backend" {
   default = "grok"
 }
 
+variable "ffmpeg_zip_path" {
+  description = "FFmpeg layer built alongside the bot deployment package"
+  type        = string
+  default     = "../ai_slop_bot/ffmpeg_layer.zip"
+}
+
 variable "bot_zip_path" {
   type        = string
   description = "Path to the ai_slop_bot.zip Lambda package"

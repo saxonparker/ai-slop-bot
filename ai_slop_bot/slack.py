@@ -286,7 +286,8 @@ def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _gallery_card(key: str, title: str, description: str, video: bool) -> dict:
+def _gallery_card(key: str, title: str, description: str, video: bool,
+                  thumbnail_url: str = hall_of_fame.VIDEO_POSTER_URL) -> dict:
     """A section preview that stays within Slack's text limit.
 
     Permalinks percent-encode the whole prompt, so a long non-ASCII prompt
@@ -300,7 +301,7 @@ def _gallery_card(key: str, title: str, description: str, video: bool) -> dict:
         text = f"*{title}*\n{description}"
     card = {"type": "section", "text": {"type": "mrkdwn", "text": text}}
     if video:
-        card["accessory"] = {"type": "image", "image_url": hall_of_fame.VIDEO_POSTER_URL, "alt_text": "Video"}
+        card["accessory"] = {"type": "image", "image_url": thumbnail_url, "alt_text": "Video"}
     return card
 
 
@@ -315,6 +316,7 @@ def gallery_unfurl(item: dict, embed_video: bool = True) -> dict:
     kind = "video" if item["video"] else "photo"
     description = f"{kind.capitalize()} {byline}" if byline else f"AI Slop Gallery {kind}"
     image_url = hall_of_fame.media_file_url(key)
+    thumbnail_url = item.get("thumbnail_url") or hall_of_fame.VIDEO_POSTER_URL
     if not item["video"] and len(image_url) <= SLACK_TEXT_LIMIT:
         blocks = [{
             "type": "image",
@@ -334,14 +336,14 @@ def gallery_unfurl(item: dict, embed_video: bool = True) -> dict:
             "description": {"type": "plain_text", "text": _truncate(description, 199)},
             "alt_text": _truncate(title, 2000),
             "video_url": hall_of_fame.player_url(key),
-            "thumbnail_url": hall_of_fame.VIDEO_POSTER_URL,
+            "thumbnail_url": thumbnail_url,
             "provider_name": "AI Slop Gallery",
         }
         if item["user"]:
             video["author_name"] = _truncate(item["user"], 49)
         return {"blocks": [video]}
     # Video cards, and photos whose encoded URL is too long for an image block
-    return {"blocks": [_gallery_card(key, title, description, item["video"])]}
+    return {"blocks": [_gallery_card(key, title, description, item["video"], thumbnail_url)]}
 
 
 def post_gallery_unfurls(message: dict, items: dict):

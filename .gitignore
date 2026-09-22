@@ -21,3 +21,4 @@ terraform/**/*.tfplan
 terraform/**/*.plan
 terraform/**/.terraform.lock.hcl
 ai_slop_bot/payment-build/
+ai_slop_bot/ffmpeg-build/
