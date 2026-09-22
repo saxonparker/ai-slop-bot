@@ -269,6 +269,28 @@ renders images and videos through the CloudFront distribution, and reads
 photo/video filtering, prompt search, user/channel filters, pagination, and a
 modal viewer.
 
+Every photo and video has a permalink. Open it in the viewer and use
+**Copy link** to get
+`https://d2jagmvo7k5q5j.cloudfront.net/index.html?item=<file name>`, where
+the file name is the S3 key without `dalle/`. Copied links always use the
+CloudFront host, even from the direct S3 URL, because that host is the Slack
+unfurl domain. The address bar follows the open item too. A link copied from
+there in Hall of Fame keeps `#hall-of-fame` and opens in All if the item is no
+longer a pick. Links to deleted items open the gallery with a notice.
+
+Pasting a gallery link into Slack previews it:
+- Photos show the image.
+- Videos show an inline player: `player.html` behind the generic
+  `video-poster.png` thumbnail. If Slack rejects the embed, the bot posts a
+  title card instead.
+- Direct CloudFront media URLs (`…/dalle/…`) preview the same way.
+- The Hall of Fame message shortcut also accepts messages that share a
+  permalink.
+
+The bot handles Slack's `link_shared` event and replies with `chat.unfurl`
+(see [Unfurling links in messages](https://docs.slack.dev/messaging/unfurling-links-in-messages/)).
+This needs the Slack app settings in [First-time setup](#first-time-setup).
+
 The **Hall of Fame** tab collects community favorites. Anyone with the gallery
 link can use the trophy control on a photo or video to add it, or remove it
 directly from Hall of Fame (including in the modal viewer). Removal only
@@ -304,8 +326,9 @@ The API permits both the CloudFront gallery URL and the existing direct S3
 URL, `https://dallepics.s3.us-east-2.amazonaws.com/index.html`.
 
 The deploy workflow publishes `gallery/config.json` from Terraform's
-`gallery_config` output, then publishes the gallery HTML. Manual deployments
-must publish both files. This configuration contains only the public API URL.
+`gallery_config` output, then publishes the gallery HTML, `player.html`, and
+`video-poster.png` to the bucket root. Manual deployments must publish all of
+them. The configuration contains only the public API URL.
 The website refreshes selections on load and when you return to its window;
 failed reads/saves show an error without silently changing membership.
 
@@ -463,7 +486,11 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
      - Request URL: `<base_url>/slack/interactions`
    - **Event Subscriptions** → Enable Events
      - Request URL: `<base_url>/slack/events`
-     - Subscribe to bot event: `app_mention`
+     - Subscribe to bot events: `app_mention`, `link_shared`
+     - **App Unfurl Domains**: `d2jagmvo7k5q5j.cloudfront.net`. Use this exact
+       host; `cloudfront.net` would claim every CloudFront link in the
+       workspace. The app then answers previews for every link on the host:
+       permalinks and `dalle/` media get previews, and other paths get none.
    - **OAuth & Permissions** → Bot Token Scopes:
      - `chat:write` - write messages
      - `commands` - receive slash commands
@@ -471,6 +498,8 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
      - `files:write` - upload generated videos and delete temporary reference/source files
      - `app_mentions:read` — receive `@slop-bot` events
      - `users:read` — resolve user IDs to display names in transcripts
+     - `links:read` / `links:write` — preview gallery links (`link_shared`, `chat.unfurl`)
+     - `links.embed:write` — play gallery videos inline in those previews
    - Reinstall the app to your workspace after changing scopes; copy the
      new Bot User OAuth Token into the `slack_bot_token` Terraform variable.
    - Invite the bot to any channel where users will `@`-mention it

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Slop Gallery video</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+        video { display: block; width: 100%; height: 100%; object-fit: contain; }
+    </style>
+</head>
+<body>
+    <!-- Embedded by Slack video unfurls (ai_slop_bot/slack.py), which forbid
+         navigation, scrolling, and overlays inside the iframe. -->
+    <video controls autoplay playsinline></video>
+    <script>
+    // ?item=<S3 key without the "dalle/" prefix>, as in gallery permalinks.
+    var slug = new URLSearchParams(location.search).get('item') || '';
+    if (/\.(mp4|mov|webm)$/i.test(slug)) {
+        document.querySelector('video').src = 'https://d2jagmvo7k5q5j.cloudfront.net/dalle/' +
+            slug.split('/').map(encodeURIComponent).join('/');
+    }
+    </script>
+</body>
+</html>

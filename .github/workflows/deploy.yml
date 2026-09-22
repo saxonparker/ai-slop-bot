@@ -144,3 +144,5 @@ jobs:
           terraform output -json gallery_config > ../gallery/config.json
           aws s3 cp ../gallery/config.json s3://dallepics/config.json --content-type "application/json" --cache-control "no-cache"
           aws s3 cp ../gallery/index.html s3://dallepics/index.html --content-type "text/html" --cache-control "no-cache"
+          aws s3 cp ../gallery/player.html s3://dallepics/player.html --content-type "text/html" --cache-control "no-cache"
+          aws s3 cp ../gallery/video-poster.png s3://dallepics/video-poster.png --content-type "image/png"
