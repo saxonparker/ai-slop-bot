@@ -1,8 +1,10 @@
-"""Shared Hall of Fame storage and the gallery's public curation API.
+"""Shared gallery links, Hall of Fame storage, and the public curation API.
 
 One DynamoDB item per selected S3 key keeps independent edits from overwriting
 each other. The gallery is intentionally open to curation by anyone with its
-link; Slack uses the same store after normal signature verification.
+link; Slack uses the same store after normal signature verification. Gallery
+permalinks (index.html?item=<key without "dalle/">) resolve to the same keys
+for Slack link previews.
 """
 
 import base64
@@ -18,8 +20,12 @@ from botocore.exceptions import ClientError
 BUCKET = "dallepics"
 CLOUDFRONT = "https://d2jagmvo7k5q5j.cloudfront.net"
 GALLERY_URL = CLOUDFRONT + "/index.html#hall-of-fame"
+PLAYER_URL = CLOUDFRONT + "/player.html"
+VIDEO_POSTER_URL = CLOUDFRONT + "/video-poster.png"
 API_PATH = "/gallery/hall-of-fame"
-MEDIA_EXTENSIONS = (".jpeg", ".jpg", ".png", ".gif", ".webp", ".mp4", ".mov", ".webm")
+MEDIA_PREFIX = "dalle/"
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm")
+MEDIA_EXTENSIONS = (".jpeg", ".jpg", ".png", ".gif", ".webp") + VIDEO_EXTENSIONS
 
 
 def is_enabled():
@@ -33,7 +39,7 @@ def _table():
 
 def validate_key(key):
     """Only generated gallery media can be curated (never uploads/metadata)."""
-    if (not isinstance(key, str) or not key.startswith("dalle/")
+    if (not isinstance(key, str) or not key.startswith(MEDIA_PREFIX)
             or len(key.encode("utf-8")) > 1024
             or not key.lower().endswith(MEDIA_EXTENSIONS)):
         raise ValueError("Choose a photo or video from the gallery.")
@@ -41,11 +47,66 @@ def validate_key(key):
 
 
 def key_from_url(url):
-    """Recover an exact S3 key, including punctuation and Unicode in prompts."""
+    """Recover an exact S3 key from a media URL or gallery permalink.
+
+    Punctuation and Unicode in prompts survive both encodings.
+    """
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc != urllib.parse.urlsplit(CLOUDFRONT).netloc:
         raise ValueError("Choose a photo or video from the gallery.")
+    if parsed.path in ("/", "/index.html"):
+        item = urllib.parse.parse_qs(parsed.query).get("item", [""])[0]
+        return validate_key(MEDIA_PREFIX + item)
     return validate_key(urllib.parse.unquote(parsed.path.lstrip("/")))
+
+
+def _item_query(key):
+    return urllib.parse.urlencode({"item": key[len(MEDIA_PREFIX):]})
+
+
+def permalink(key):
+    """The link the gallery's Copy link button shares."""
+    return f"{CLOUDFRONT}/index.html?{_item_query(key)}"
+
+
+def player_url(key):
+    """An embeddable player page for Slack video blocks."""
+    return f"{PLAYER_URL}?{_item_query(key)}"
+
+
+def media_file_url(key):
+    """The CloudFront URL of the media itself, as image_upload returns it."""
+    return f"{CLOUDFRONT}/{urllib.parse.quote(key)}"
+
+
+def title_from_key(key):
+    """Match the gallery's titleFromKey: drop the prefix, extension, and random tag."""
+    name = key[len(MEDIA_PREFIX):]
+    dot = name.rfind(".")
+    if dot > 0:
+        name = name[:dot]
+    underscore = name.rfind("_")
+    if underscore > 0:
+        name = name[:underscore]
+    return name.replace("_", " ")
+
+
+def media_details(key):
+    """Describe gallery media for Slack previews, or None if S3 can't serve it."""
+    try:
+        head = boto3.client("s3").head_object(Bucket=BUCKET, Key=validate_key(key))
+    except ClientError as exc:
+        # Without s3:ListBucket, S3 reports a missing key as 403 instead of 404.
+        print(f"GALLERY MEDIA LOOKUP ERROR: {key}: {exc}")
+        return None
+    metadata = head.get("Metadata") or {}
+    return {
+        "key": key,
+        "title": title_from_key(key),
+        "video": key.lower().endswith(VIDEO_EXTENSIONS),
+        "user": metadata.get("user", ""),
+        "channel": metadata.get("channel", ""),
+    }
 
 
 def _media_table():
@@ -69,7 +130,8 @@ def key_from_slack_message(message):
             for child in value:
                 visit(child)
         elif isinstance(value, str):
-            for url in re.findall(re.escape(CLOUDFRONT) + r'/dalle/[^\s<>|]+', value):
+            # Media URLs and permalinks (index.html?item=...) shared from the gallery
+            for url in re.findall(re.escape(CLOUDFRONT) + r'/(?:dalle/|(?:index\.html)?\?)[^\s<>|]+', value):
                 try:
                     candidates.add(key_from_url(url))
                 except ValueError:

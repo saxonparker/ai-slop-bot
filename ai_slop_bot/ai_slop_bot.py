@@ -56,6 +56,9 @@ def ai_slop_bot(event, context):
                 return
             slack.post_hall_of_fame_result(response_url, selection)
             return
+        if source == "link_shared":
+            _unfurl_gallery_links(message)
+            return
         input_str = message["prompt"]
         user = message["user"]
         channel_id = message.get("channel_id", "")
@@ -404,6 +407,17 @@ def ai_slop_bot(event, context):
         _post_error_safe(_describe_error_for_user(exc), source=source, response_url=response_url,
                          channel_id=channel_id, thread_ts=thread_ts)
     # pylint: enable=broad-except
+
+
+def _unfurl_gallery_links(message):
+    """Preview shared gallery links; dispatch only forwards URLs naming gallery media."""
+    items = {}
+    for url in message["links"]:
+        details = hall_of_fame.media_details(hall_of_fame.key_from_url(url))
+        if details:  # None when S3 can't serve it, e.g. deleted
+            items[url] = details
+    if items:
+        slack.post_gallery_unfurls(message, items)
 
 
 def _describe_error_for_user(exc: Exception) -> str:

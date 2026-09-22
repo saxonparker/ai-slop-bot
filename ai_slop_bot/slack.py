@@ -259,6 +259,124 @@ def post_hall_of_fame_result(response_url: str, selection: dict):
     resp.raise_for_status()
 
 
+# Slack's cap on section text and on image block URLs.
+SLACK_TEXT_LIMIT = 3000
+
+
+def _escape_mrkdwn(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _mrkdwn_within(text: str, limit: int) -> str:
+    """Escape text for mrkdwn, shortening the text (never an escape) to fit."""
+    escaped = _escape_mrkdwn(text)
+    if len(escaped) <= limit:
+        return escaped
+    pieces, size = [], len("…")
+    for char in text:
+        piece = _escape_mrkdwn(char)
+        if size + len(piece) > limit:
+            break
+        pieces.append(piece)
+        size += len(piece)
+    return "".join(pieces) + "…"
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _gallery_card(key: str, title: str, description: str, video: bool) -> dict:
+    """A section preview that stays within Slack's text limit.
+
+    Permalinks percent-encode the whole prompt, so a long non-ASCII prompt
+    can leave no room for one. The unfurled message already carries the
+    link, so drop it rather than truncate the URL.
+    """
+    title = _mrkdwn_within(title, 2000)
+    description = _mrkdwn_within(description, 900)
+    text = f"*<{hall_of_fame.permalink(key)}|{title}>*\n{description}"
+    if len(text) > SLACK_TEXT_LIMIT:
+        text = f"*{title}*\n{description}"
+    card = {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+    if video:
+        card["accessory"] = {"type": "image", "image_url": hall_of_fame.VIDEO_POSTER_URL, "alt_text": "Video"}
+    return card
+
+
+def gallery_unfurl(item: dict, embed_video: bool = True) -> dict:
+    """Preview gallery media: the photo itself, an inline player, or a card."""
+    key = item["key"]
+    title = item["title"].strip() or "Untitled"
+    byline = " ".join(part for part in (
+        f"by {item['user']}" if item["user"] else "",
+        f"in #{item['channel']}" if item["channel"] else "",
+    ) if part)
+    kind = "video" if item["video"] else "photo"
+    description = f"{kind.capitalize()} {byline}" if byline else f"AI Slop Gallery {kind}"
+    image_url = hall_of_fame.media_file_url(key)
+    if not item["video"] and len(image_url) <= SLACK_TEXT_LIMIT:
+        blocks = [{
+            "type": "image",
+            "image_url": image_url,
+            "alt_text": _truncate(title, 2000),
+            "title": {"type": "plain_text", "text": _truncate(title, 2000)},
+        }]
+        if byline:
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _mrkdwn_within(byline, 2000)}]})
+        return {"blocks": blocks}
+    if item["video"] and embed_video:
+        # Slack requires a thumbnail and an embeddable page on the unfurl domain.
+        video = {
+            "type": "video",
+            "title": {"type": "plain_text", "text": _truncate(title, 199)},
+            "title_url": hall_of_fame.permalink(key),
+            "description": {"type": "plain_text", "text": _truncate(description, 199)},
+            "alt_text": _truncate(title, 2000),
+            "video_url": hall_of_fame.player_url(key),
+            "thumbnail_url": hall_of_fame.VIDEO_POSTER_URL,
+            "provider_name": "AI Slop Gallery",
+        }
+        if item["user"]:
+            video["author_name"] = _truncate(item["user"], 49)
+        return {"blocks": [video]}
+    # Video cards, and photos whose encoded URL is too long for an image block
+    return {"blocks": [_gallery_card(key, title, description, item["video"])]}
+
+
+def post_gallery_unfurls(message: dict, items: dict):
+    """Unfurl gallery links, retrying with video cards if Slack rejects an embed."""
+    try:
+        _chat_unfurl(message, {url: gallery_unfurl(item) for url, item in items.items()})
+    except RuntimeError as exc:
+        if not any(item["video"] for item in items.values()):
+            raise
+        print(f"SLACK VIDEO UNFURL REJECTED, USING CARDS: {exc}")
+        _chat_unfurl(message, {url: gallery_unfurl(item, embed_video=False) for url, item in items.items()})
+
+
+def _chat_unfurl(message: dict, unfurls: dict):
+    token = os.environ["SLACK_BOT_TOKEN"]
+    # unfurl_id + source also covers links still in the message composer.
+    if message.get("unfurl_id") and message.get("unfurl_source"):
+        target = {"unfurl_id": message["unfurl_id"], "source": message["unfurl_source"]}
+    else:
+        target = {"channel": message["channel"], "ts": message["message_ts"]}
+    resp = requests.post(
+        "https://slack.com/api/chat.unfurl",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        data=json.dumps({**target, "unfurls": unfurls}),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Slack chat.unfurl failed: {data.get('error')}")
+
+
 def post_video_response(channel_id: str, user: str, display: str, video_bytes: bytes,
                         thread_ts: str | None = None) -> str:
     """Upload a video, post it to the channel/thread, and return its Slack file ID."""

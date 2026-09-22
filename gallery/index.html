@@ -224,7 +224,7 @@
         }
 
         .badge-hall { top: auto; bottom: 8px; left: auto; right: 8px; background: #f4c76b; color: #302008; }
-        .trophy { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
+        .trophy, .link-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
         .filter-pill[data-filter="hall-of-fame"].active { background: #44351c; color: #f4c76b; }
         .hall-button {
             border: 1px solid #444;
@@ -248,7 +248,9 @@
         .hall-intro strong { color: #f4c76b; }
         .hall-status:empty { display: none; }
         .hall-status.error { color: #f2aa9f; }
-        .modal-actions { margin-top: 12px; }
+        .modal-actions { margin-top: 12px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+        .modal-status { color: #888; font-size: 13px; }
+        .modal-status:not(:empty) { margin-top: 8px; }
 
         /* Loading / empty states */
         .status-message {
@@ -479,6 +481,7 @@
     </div>
     <div class="hall-status" id="hallStatus" role="status" aria-live="polite"></div>
     <div class="hall-status" id="hallRetry" hidden><button class="hall-button" onclick="loadHallOfFame()">Retry Hall of Fame</button></div>
+    <div class="hall-status" id="linkStatus" role="status" aria-live="polite"></div>
     <div id="grid" class="media-grid"></div>
 
     <div id="pagination" class="pagination" style="display:none;"></div>
@@ -490,7 +493,11 @@
             <div id="modalMedia"></div>
             <div id="modalTitle" class="modal-title"></div>
             <div id="modalMeta" class="modal-meta"></div>
-            <div id="modalActions" class="modal-actions"></div>
+            <div class="modal-actions">
+                <span id="modalActions"></span>
+                <button class="hall-button" onclick="copyItemLink()"><svg class="link-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Copy link</button>
+            </div>
+            <div id="modalStatus" class="modal-status" role="status" aria-live="polite"></div>
         </div>
         <button class="modal-nav modal-next" onclick="navigateModal(1)">&rsaquo;</button>
     </div>
@@ -498,6 +505,7 @@
     <script>
     var BUCKET = 'dallepics';
     var CLOUDFRONT = 'https://d2jagmvo7k5q5j.cloudfront.net';
+    var MEDIA_PREFIX = 'dalle/';
     var VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm'];
     var TROPHY = '<svg class="trophy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8m-4-7v7M7 3h10v6a5 5 0 0 1-10 0V3ZM7 5H4v3a4 4 0 0 0 4 4m9-7h3v3a4 4 0 0 1-4 4"/></svg>';
 
@@ -506,6 +514,7 @@
         IdentityPoolId: 'us-east-2:a9b938e6-69b1-40a2-9023-b0d4e798e0e4',
     });
     var s3 = new AWS.S3({ apiVersion: '2006-03-01', params: { Bucket: BUCKET } });
+    var BASE_TITLE = document.title;
 
     var allItems = [];
     var filteredItems = [];
@@ -518,7 +527,9 @@
     var hallUrl = '';
     var hallReady = false;
     var hallLoading = false;
+    var hallSettled = false;
     var galleryLoaded = false;
+    var linkedKey = linkedKeyFromUrl();
 
     function hallStatus(message, error) {
         var el = document.getElementById('hallStatus');
@@ -553,7 +564,9 @@
             document.getElementById('hallRetry').hidden = false;
         } finally {
             hallLoading = false;
+            hallSettled = true;
             refreshHallControls();
+            openLinkedItem();
         }
     }
 
@@ -637,7 +650,7 @@
     }
 
     function loadGallery() {
-        var prefix = 'dalle/';
+        var prefix = MEDIA_PREFIX;
         allItems = [];
         showLoading('Loading media...');
 
@@ -674,6 +687,7 @@
                     loadManifest(function() {
                         populateDropdowns();
                         applyFilters();
+                        openLinkedItem();
                     });
                 }
             });
@@ -691,6 +705,7 @@
     }
 
     function setFilter(filter) {
+        cancelLinkedItem();
         currentFilter = filter;
         history.replaceState(null, '', location.pathname + location.search + (filter === 'hall-of-fame' ? '#hall-of-fame' : ''));
         syncFilterControls();
@@ -755,7 +770,7 @@
                 if (filteredItems.length) openModal(Math.min(oldModalIndex, filteredItems.length - 1));
                 else closeModal();
             } else {
-                document.getElementById('modalActions').innerHTML = hallButton(modalItem, modalIndex, true);
+                showModalDetails(modalItem, modalIndex);
             }
         }
     }
@@ -851,26 +866,35 @@
 
     // Modal
     function openModal(idx) {
-        modalIndex = idx;
         var item = filteredItems[idx];
         if (!item) return;
+        modalIndex = idx;
+        linkedKey = '';  // showing any item settles a pending permalink
         var mediaEl = document.getElementById('modalMedia');
         if (item.type === 'video') {
             mediaEl.innerHTML = '<video src="' + item.url + '" controls autoplay style="max-width:90vw;max-height:80vh;border-radius:6px;"></video>';
         } else {
             mediaEl.innerHTML = '<img src="' + item.url + '" alt="' + escapeHtml(item.title) + '">';
         }
+        showModalDetails(item, idx);
+        document.getElementById('modalStatus').textContent = '';
+        document.getElementById('linkStatus').textContent = '';
+        document.getElementById('modal').classList.add('open');
+        document.body.style.overflow = 'hidden';
+        document.title = item.title + ' \u00b7 ' + BASE_TITLE;
+        setItemParam(item.key);
+    }
+
+    // Leaves the media alone so a playing video isn't restarted.
+    function showModalDetails(item, idx) {
         document.getElementById('modalTitle').textContent = item.title;
         var meta = getItemMeta(item);
-        var metaEl = document.getElementById('modalMeta');
         var parts = [];
         if (meta.user) parts.push('by ' + meta.user);
         if (meta.channel) parts.push('#' + meta.channel);
         if (meta.model) parts.push(meta.model);
-        metaEl.textContent = parts.length ? parts.join('  \u00b7  ') : '';
+        document.getElementById('modalMeta').textContent = parts.join('  \u00b7  ');
         document.getElementById('modalActions').innerHTML = hallButton(item, idx, true);
-        document.getElementById('modal').classList.add('open');
-        document.body.style.overflow = 'hidden';
     }
 
     function closeModal() {
@@ -880,6 +904,80 @@
         var video = modal.querySelector('video');
         if (video) video.pause();
         modalIndex = -1;
+        document.getElementById('modalStatus').textContent = '';
+        document.title = BASE_TITLE;
+        setItemParam('');
+    }
+
+    // Permalinks: ?item=<S3 key without the "dalle/" prefix>
+    function linkedKeyFromUrl() {
+        var slug = new URLSearchParams(location.search).get('item');
+        return slug ? MEDIA_PREFIX + slug : '';
+    }
+
+    // Shared links always use CloudFront, the host Slack unfurls, even when
+    // browsing the direct S3 URL.
+    function permalink(item) {
+        var url = new URL(CLOUDFRONT + '/index.html');
+        url.searchParams.set('item', item.key.slice(MEDIA_PREFIX.length));
+        return url.href;
+    }
+
+    function setItemParam(key) {
+        var url = new URL(location.href);
+        if (key) url.searchParams.set('item', key.slice(MEDIA_PREFIX.length));
+        else url.searchParams.delete('item');
+        if (!url.searchParams.toString()) url.search = '';
+        if (url.href === location.href) return;
+        try {
+            history.replaceState(null, '', url.href);
+        } catch (error) {
+            // Safari and Firefox throttle rapid URL updates, e.g. a held arrow key.
+        }
+    }
+
+    async function copyItemLink() {
+        var item = filteredItems[modalIndex];
+        if (!item) return;
+        var link = permalink(item);
+        try {
+            await navigator.clipboard.writeText(link);
+            if (filteredItems[modalIndex] === item) document.getElementById('modalStatus').textContent = 'Link copied.';
+        } catch (error) {
+            window.prompt('Copy this link:', link);
+        }
+    }
+
+    // Explicit navigation replaces a permalink still waiting for the listing or picks.
+    function cancelLinkedItem() {
+        if (!linkedKey) return;
+        linkedKey = '';
+        setItemParam('');
+    }
+
+    function openLinkedItem() {
+        // Wait for the listing and, in Hall of Fame, the picks.
+        if (!linkedKey || !galleryLoaded || (currentFilter === 'hall-of-fame' && !hallSettled)) return;
+        var key = linkedKey;
+        linkedKey = '';
+        if (!allItems.some(function(item) { return item.key === key; })) {
+            document.getElementById('linkStatus').textContent = 'That photo or video is no longer in the gallery.';
+            setItemParam('');
+            return;
+        }
+        function indexOfKey() {
+            return filteredItems.findIndex(function(item) { return item.key === key; });
+        }
+        var index = indexOfKey();
+        if (index < 0) {
+            // Hidden by this view (e.g. no longer a pick): show it in the full gallery.
+            ['searchPrompt', 'searchUser', 'searchChannel'].forEach(function(id) {
+                document.getElementById(id).value = '';
+            });
+            setFilter('all');
+            index = indexOfKey();
+        }
+        openModal(index);
     }
 
     function navigateModal(dir) {
@@ -901,19 +999,21 @@
 
     // Event listeners
     document.getElementById('searchPrompt').addEventListener('input', function() {
+        cancelLinkedItem();
         currentPage = 1;
         applyFilters();
     });
     ['searchUser', 'searchChannel'].forEach(function(id) {
         document.getElementById(id).addEventListener('change', function() {
+            cancelLinkedItem();
             currentPage = 1;
             applyFilters();
         });
     });
 
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeModal();
         if (modalIndex < 0) return;
+        if (e.key === 'Escape') closeModal();
         if (e.key === 'ArrowLeft') navigateModal(-1);
         if (e.key === 'ArrowRight') navigateModal(1);
     });

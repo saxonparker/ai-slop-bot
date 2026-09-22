@@ -2,10 +2,11 @@
 
 Two routes are served from the same Lambda:
   POST /ai-slop       — HTTP route for Slack slash-command payloads
-  POST /slack/events  — Events API (JSON body); we only act on app_mention
+  POST /slack/events  — Events API (JSON body); we act on app_mention
                         events inside a thread, treating them as continuation
-                        turns of an existing tracked conversation. Top-level
-                        @-mentions are ignored.
+                        turns of an existing tracked conversation, and on
+                        link_shared events for gallery links (Slack previews).
+                        Top-level @-mentions are ignored.
 """
 
 import base64
@@ -308,7 +309,7 @@ def _handle_block_action(payload: dict):
 
 
 def _handle_event(event):
-    """Slack Events API. Handles url_verification + app_mention."""
+    """Slack Events API. Handles url_verification, app_mention, and link_shared."""
     body = _decode_body(event)
     try:
         payload = json.loads(body)
@@ -327,6 +328,8 @@ def _handle_event(event):
         return _json_response("ok")
 
     inner = payload.get("event") or {}
+    if inner.get("type") == "link_shared":
+        return _handle_link_shared(inner)
     if inner.get("type") != "app_mention":
         return _json_response("ok")
 
@@ -361,6 +364,28 @@ def _handle_event(event):
         "source": "event_mention",
     }
     _publish(message)
+    return _json_response("ok")
+
+
+def _handle_link_shared(event: dict):
+    """Queue previews for gallery links; Slack wants this ack before chat.unfurl."""
+    links = []
+    for link in event.get("links") or []:
+        url = link.get("url") or ""
+        try:
+            hall_of_fame.key_from_url(url)
+        except ValueError:
+            continue
+        links.append(url)
+    if links:
+        _publish({
+            "source": "link_shared",
+            "unfurl_id": event.get("unfurl_id", ""),
+            "unfurl_source": event.get("source", ""),
+            "channel": event.get("channel", ""),
+            "message_ts": event.get("message_ts", ""),
+            "links": links,
+        })
     return _json_response("ok")
 
 
