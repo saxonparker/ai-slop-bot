@@ -300,6 +300,8 @@ serves public `GET`/`PUT /gallery/hall-of-fame`; Slack requests retain their nor
 signature verification and asynchronous processing. Curation intentionally
 requires no website login. Writes validate media keys and verify that newly
 featured files exist in S3. No browser S3 write permissions are needed.
+The API permits both the CloudFront gallery URL and the existing direct S3
+URL, `https://dallepics.s3.us-east-2.amazonaws.com/index.html`.
 
 The deploy workflow publishes `gallery/config.json` from Terraform's
 `gallery_config` output, then publishes the gallery HTML. Manual deployments

@@ -3,7 +3,10 @@ resource "aws_apigatewayv2_api" "ai_slop" {
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = ["https://d2jagmvo7k5q5j.cloudfront.net"]
+    allow_origins = [
+      "https://d2jagmvo7k5q5j.cloudfront.net",
+      "https://dallepics.s3.us-east-2.amazonaws.com",
+    ]
     allow_methods = ["GET", "PUT", "OPTIONS"]
     allow_headers = ["content-type"]
     max_age       = 3600

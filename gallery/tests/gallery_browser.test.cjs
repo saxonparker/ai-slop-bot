@@ -12,13 +12,19 @@ const photo = 'dalle/a_"great"_cat_🏆_ABC.jpeg';
 const video = 'dalle/surfing_dog_XYZ.mp4';
 const other = 'dalle/a_sleepy_cat_DEF.jpeg';
 const defaultKeys = [photo, video, other];
+const cloudFrontOrigin = 'https://d2jagmvo7k5q5j.cloudfront.net';
+const s3Origin = 'https://dallepics.s3.us-east-2.amazonaws.com';
+// Use the deployed origin policy so a hosting URL cannot pass browser tests
+// while Terraform prevents that same page from reading or saving selections.
+const apiGateway = fs.readFileSync(path.join(__dirname, '..', '..', 'terraform', 'api_gateway.tf'), 'utf8');
+const allowedOrigins = [...apiGateway.match(/allow_origins\s*=\s*\[([\s\S]*?)\]/)[1].matchAll(/"([^"]+)"/g)].map(match => match[1]);
 const manifest = {
   [photo]: {user: 'alice', channel: 'cats', model: 'image-model'},
   [video]: {user: 'bob', channel: 'videos', model: 'video-model'},
   [other]: {user: 'bob', channel: 'cats', model: 'image-model'},
 };
 
-async function gallery(t, {keys = defaultKeys, featured = [], hash = '', mobile = false, failRead = false} = {}) {
+async function gallery(t, {keys = defaultKeys, featured = [], hash = '', mobile = false, failRead = false, origin = cloudFrontOrigin} = {}) {
   const context = await browser.newContext({viewport: mobile ? {width: 390, height: 844} : {width: 1280, height: 900}});
   t.after(() => context.close());
   const page = await context.newPage();
@@ -46,8 +52,8 @@ async function gallery(t, {keys = defaultKeys, featured = [], hash = '', mobile 
       return route.fulfill({contentType: 'application/javascript', body: sdk});
     }
     if (url.hostname === 'api.example') {
-      const headers = {'Access-Control-Allow-Origin': 'https://gallery.example',
-        'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'content-type'};
+      const headers = {'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'content-type'};
+      if (allowedOrigins.includes(origin)) headers['Access-Control-Allow-Origin'] = origin;
       if (req.method() === 'OPTIONS') return route.fulfill({status: 204, headers});
       if (req.method() === 'GET') return route.fulfill({headers, status: state.failRead ? 503 : 200,
         json: state.failRead ? {error: 'Unavailable'} : {keys: [...state.featured]}});
@@ -62,12 +68,12 @@ async function gallery(t, {keys = defaultKeys, featured = [], hash = '', mobile 
     if (url.pathname === '/config.json') return route.fulfill({json: {
       hallOfFameUrl: 'https://api.example/gallery/hall-of-fame',
     }});
-    if (url.hostname === 'gallery.example') return route.fulfill({contentType: 'text/html',
+    if (url.origin === origin && url.pathname === '/index.html') return route.fulfill({contentType: 'text/html',
       body: fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8')});
     if (url.pathname.endsWith('.mp4')) return route.fulfill({contentType: 'video/mp4', body: ''});
     return route.fulfill({contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><rect width="500" height="500" fill="#746449"/><circle cx="250" cy="210" r="100" fill="#dcc599"/></svg>'});
   });
-  await page.goto('https://gallery.example/index.html' + hash);
+  await page.goto(origin + '/index.html' + hash);
   await page.waitForFunction(() => galleryLoaded && !hallLoading);
   return {page, state};
 }
@@ -181,4 +187,17 @@ test('mobile Hall of Fame remains within the viewport and allows removal', async
   await page.locator('.card-actions button').first().click();
   await page.waitForFunction(() => hallKeys.size === 1 && hallPending.size === 0);
   assert.equal(await page.locator('.media-item').count(), 1);
+});
+
+test('the direct S3 gallery URL can load, add and remove Hall of Fame picks', async t => {
+  const {page, state} = await gallery(t, {origin: s3Origin});
+  assert.equal(await page.evaluate(() => hallReady), true);
+  await page.locator('.card-actions button').first().click();
+  await page.waitForFunction(() => hallKeys.size === 1 && hallPending.size === 0);
+  assert.deepEqual(state.writes, [{key: photo, featured: true}]);
+  await page.getByRole('button', {name: 'Hall of Fame', exact: true}).click();
+  await page.getByRole('button', {name: 'Remove from Hall of Fame'}).click();
+  await page.waitForFunction(() => hallKeys.size === 0 && hallPending.size === 0);
+  assert.equal(await page.locator('.media-item').count(), 0);
+  assert.deepEqual(state.writes[1], {key: photo, featured: false});
 });
