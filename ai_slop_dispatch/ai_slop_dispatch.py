@@ -1,12 +1,10 @@
 """Dispatch Lambda for /slop-bot. Receives Slack webhook and publishes to SNS.
 
-Two routes are served from the same Lambda:
-  POST /ai-slop       — HTTP route for Slack slash-command payloads
-  POST /slack/events  — Events API (JSON body); we act on app_mention
-                        events inside a thread, treating them as continuation
-                        turns of an existing tracked conversation, and on
-                        link_shared events for gallery links (Slack previews).
-                        Top-level @-mentions are ignored.
+Routes served from the same Lambda:
+  POST /ai-slop             — HTTP route for Slack slash-command payloads
+  POST /slack/events        — Events API (JSON body); we act on link_shared
+                              events for gallery links (Slack previews).
+  POST /slack/interactions  — Slack interactivity (upload modals, shortcuts).
 """
 
 import base64
@@ -14,7 +12,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import time
 import traceback
 import urllib.parse
@@ -38,8 +35,8 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -e <prompt>` — emoji-only text response
   `{CANONICAL_SLASH_COMMAND} -bufo <prompt>` or `{CANONICAL_SLASH_COMMAND} --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewrite using names from bufopedia.com
   `{CANONICAL_SLASH_COMMAND} -p <prompt>` — potato mode (sarcastic & rude)
-  `{CANONICAL_SLASH_COMMAND} -c <prompt>` or `{CANONICAL_SLASH_COMMAND} --conversation <prompt>` — start a text-only conversation in a Slack thread
   `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
+  Every text reply has a *Continue* button — click it to add a follow-up turn. Anyone can continue and pays for their own turns; `-p`, `-e`, and `-b` from the first prompt carry over (`-bufo` is single-shot).
   `{CANONICAL_SLASH_COMMAND} -u` or `{CANONICAL_SLASH_COMMAND} --usage` — show your usage stats and credit balance
   `{CANONICAL_SLASH_COMMAND} -g` or `{CANONICAL_SLASH_COMMAND} --gallery` — show the AI Slop Gallery link
   `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — get credits and payment instructions
@@ -84,13 +81,6 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   Resolution drives price: 480p $0.08/sec, 720p $0.14/sec, 1080p $0.25/sec.
   A 10s clip runs $0.80 at 480p versus $2.50 at 1080p, so drop `-r` to spend less.
 
-*Conversations:*
-  `{CANONICAL_SLASH_COMMAND} -c <prompt>` starts a multi-turn text conversation rooted in a
-  Slack thread. Continue it by `@`-mentioning the bot in the thread:
-  `@slop-bot <prompt>`. Slack does not allow slash commands inside threads,
-  so use mentions for follow-ups. Conversations are text-only (`-c` cannot
-  combine with `-i` or `-v`) and are capped at ~200 KB of transcript.
-
 *Hidden directives:*
   `{CANONICAL_SLASH_COMMAND} tell me a joke [make it about dogs]` — text in `[brackets]` is sent to the AI but hidden from the channel
   `{CANONICAL_SLASH_COMMAND} what's the capital of France? ]asking for a friend[` — text in reverse `]brackets[` is shown in the channel but not sent to the AI
@@ -101,8 +91,6 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   Video: `grok` (default), `gemini` (Veo 3.1)"""
 
 
-# Matches a leading Slack user mention like `<@U12345>` or `<@U12345|name>`.
-_LEADING_MENTION_RE = re.compile(r"^\s*<@[UW][A-Z0-9]+(\|[^>]+)?>\s*")
 _SMART_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 _DASH_TRANSLATION = str.maketrans({ch: "-" for ch in _SMART_DASHES})
 _LONG_FLAGS = {
@@ -111,7 +99,6 @@ _LONG_FLAGS = {
     "--gallery",
     "--pay",
     "--pay-test",
-    "--conversation",
     "--upload",
     "--edit",
     "--edit-video",
@@ -137,6 +124,8 @@ PRESET_VOICES = {
     "sirius": "M", "ursa": "F", "zagan": "M", "zenith": "M",
 }
 MAX_VOICES = 3
+# A Continue button's response_url lives 30 minutes; refuse older modal submissions.
+CONTINUE_MODAL_MAX_AGE_SECONDS = 25 * 60
 
 
 def _normalize_flag_token(token: str) -> str:
@@ -216,7 +205,6 @@ def _handle_slash_command(event):
         "response_url": params["response_url"],
         "channel_id": params.get("channel_id", ""),
         "channel_name": params.get("channel_name", ""),
-        "thread_ts": params.get("thread_ts", ""),
         "prompt": prompt,
         "user": user,
         "source": "slash",
@@ -246,6 +234,8 @@ def _handle_interaction(event):
     if payload.get("type") != "view_submission":
         return _json_payload({})
     view = payload.get("view") or {}
+    if view.get("callback_id") == "ai_slop_continue":
+        return _handle_continue_submission(payload, view)
     if view.get("callback_id") != "ai_slop_upload":
         return _json_payload({})
 
@@ -259,6 +249,9 @@ def _handle_interaction(event):
 def _handle_block_action(payload: dict):
     """Update the upload modal when a stateful select changes."""
     for action in payload.get("actions") or []:
+        if action.get("action_id") == "conversation_continue":
+            _open_continue_modal(payload, action.get("value") or "")
+            return _json_payload({})
         if action.get("action_id") in ("hall_of_fame_add", "hall_of_fame_remove"):
             key = hall_of_fame.validate_key(action.get("value"))
             _publish({
@@ -309,7 +302,7 @@ def _handle_block_action(payload: dict):
 
 
 def _handle_event(event):
-    """Slack Events API. Handles url_verification, app_mention, and link_shared."""
+    """Slack Events API. Handles url_verification and link_shared."""
     body = _decode_body(event)
     try:
         payload = json.loads(body)
@@ -330,41 +323,68 @@ def _handle_event(event):
     inner = payload.get("event") or {}
     if inner.get("type") == "link_shared":
         return _handle_link_shared(inner)
-    if inner.get("type") != "app_mention":
-        return _json_response("ok")
-
-    # Self-mention / bot loop guard.
-    if inner.get("bot_id") or inner.get("subtype") == "bot_message":
-        return _json_response("ok")
-
-    thread_ts = inner.get("thread_ts")
-    if not thread_ts:
-        # Top-level @-mention: ignore silently (design choice).
-        return _json_response("ok")
-
-    raw_text = inner.get("text") or ""
-    prompt = _LEADING_MENTION_RE.sub("", raw_text).strip()
-    if not prompt:
-        return _json_response("ok")
-
-    channel_id = inner.get("channel", "")
-    event_user_id = inner.get("user", "")
-    print(f"DISPATCH MENTION: channel={channel_id} thread={thread_ts} "
-          f"user={event_user_id} prompt={prompt!r}")
-
-    message = {
-        # Events API has no response_url; bot Lambda will use chat.postMessage.
-        "response_url": "",
-        "channel_id": channel_id,
-        "channel_name": "",
-        "thread_ts": thread_ts,
-        "prompt": prompt,
-        "user": event_user_id,
-        "event_user_id": event_user_id,
-        "source": "event_mention",
-    }
-    _publish(message)
     return _json_response("ok")
+
+
+def _open_continue_modal(payload: dict, conversation_id: str):
+    """Open the follow-up prompt modal for a Continue button click."""
+    channel = payload.get("channel") or {}
+    metadata = {
+        "conversation_id": conversation_id,
+        # The button's response_url posts the reply into the same channel,
+        # so no bot invite or chat.postMessage is needed.
+        "response_url": payload["response_url"],
+        "channel_id": channel.get("id", ""),
+        "channel_name": channel.get("name", ""),
+        "opened_at": int(time.time()),
+    }
+    _slack_api_post("views.open", {
+        "trigger_id": payload["trigger_id"],
+        "view": _continue_view(metadata),
+    })
+
+
+def _continue_view(metadata: dict) -> dict:
+    return {
+        "type": "modal",
+        "callback_id": "ai_slop_continue",
+        "private_metadata": json.dumps(metadata),
+        "title": {"type": "plain_text", "text": "Continue"},
+        "submit": {"type": "plain_text", "text": "Send"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [{
+            "type": "input",
+            "block_id": "prompt_block",
+            "label": {"type": "plain_text", "text": "Follow-up"},
+            "element": _plain_text_input("prompt", multiline=True),
+        }],
+    }
+
+
+def _handle_continue_submission(payload: dict, view: dict):
+    """Publish one conversation turn from the Continue modal."""
+    metadata = json.loads(view.get("private_metadata") or "{}")
+    state = (view.get("state") or {}).get("values") or {}
+    prompt = (_state_value(state, "prompt_block", "prompt").get("value") or "").strip()
+    if not prompt:
+        return _json_payload({"response_action": "errors", "errors": {"prompt_block": "Enter a prompt."}})
+    if time.time() - int(metadata.get("opened_at") or 0) > CONTINUE_MODAL_MAX_AGE_SECONDS:
+        return _json_payload({"response_action": "errors", "errors": {
+            "prompt_block": "This form has expired. Close it and click Continue again.",
+        }})
+    user = payload.get("user") or {}
+    _publish({
+        "source": "conversation",
+        "conversation_id": metadata.get("conversation_id", ""),
+        "prompt": prompt,
+        # `username` is the same handle slash commands deliver as user_name, so
+        # balances and usage line up. Signatures are verified before routing.
+        "user": user.get("username") or user.get("name") or "",
+        "response_url": metadata.get("response_url", ""),
+        "channel_id": metadata.get("channel_id", ""),
+        "channel_name": metadata.get("channel_name", ""),
+    })
+    return _json_payload({})
 
 
 def _handle_link_shared(event: dict):
@@ -821,7 +841,6 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
             "response_url": metadata.get("response_url", ""),
             "channel_id": metadata.get("channel_id", ""),
             "channel_name": metadata.get("channel_name", ""),
-            "thread_ts": "",
             "prompt": " ".join(command_parts),
             "user": metadata.get("user", ""),
             "source": "slash",
@@ -841,7 +860,6 @@ def _message_from_upload_submission(view: dict) -> tuple[dict, dict | None]:
         "response_url": metadata.get("response_url", ""),
         "channel_id": metadata.get("channel_id", ""),
         "channel_name": metadata.get("channel_name", ""),
-        "thread_ts": "",
         "prompt": " ".join(command_parts),
         "user": metadata.get("user", ""),
         "source": "slash",

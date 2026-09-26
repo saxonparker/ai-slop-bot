@@ -20,7 +20,6 @@ _LONG_FLAGS = {
     "--gallery",
     "--pay",
     "--pay-test",
-    "--conversation",
     "--upload",
     "--edit",
     "--edit-video",
@@ -32,6 +31,7 @@ _LONG_FLAGS = {
     "--credit",
     "--bufo",
 }
+EMOJI_DIRECTIVE = " [Respond only with emojis. No text.]"
 _RESOLUTION_HELP = (
     "Use -r with 480, 720, or 1080 (a trailing \"p\" is fine), for example "
     "/slop-bot -v -r 720 a corgi surfing."
@@ -74,7 +74,6 @@ class ParsedCommand:
     pay_error: str | None = None
     credit_target: str | None = None
     credit_amount: float | None = None
-    conversation: bool = False
     upload_requested: bool = False
     source_image: media_refs.ReferenceImage | None = None
     reference_images: list[media_refs.ReferenceImage] = field(default_factory=list)
@@ -107,7 +106,6 @@ def parse_command(input_str: str) -> ParsedCommand:
     video_source_url = None
     credit_target = None
     credit_amount = None
-    conversation_mode = False
     upload_requested = False
     source_image = None
     reference_images = []
@@ -169,8 +167,6 @@ def parse_command(input_str: str) -> ParsedCommand:
                 except InvalidOperation:
                     prompt_tokens.append(token)
                     prompt_tokens.append(tokens[i])
-        elif lower in ("-c", "--conversation"):
-            conversation_mode = True
         elif lower == "--upload":
             upload_requested = True
         elif lower in ("--edit-video", "--extend-video"):
@@ -237,8 +233,47 @@ def parse_command(input_str: str) -> ParsedCommand:
     text = " ".join(prompt_tokens)
 
     if emoji_mode:
-        text += " [Respond only with emojis. No text.]"
+        text += EMOJI_DIRECTIVE
 
+    display_text, prompt_text = split_brackets(text)
+
+    mode = "video" if video_mode else "image" if image_mode else "text"
+    if len(pay_flags) > 1:
+        pay_error = "Use -pay for real credits or -pay-test for sandbox testing in separate commands."
+    return ParsedCommand(
+        mode=mode,
+        display_text=display_text,
+        prompt_text=prompt_text,
+        emoji_mode=emoji_mode,
+        potato_mode=potato_mode,
+        bufo_mode=bufo_mode,
+        backend_override=backend_override,
+        usage=usage_mode,
+        report=report_mode,
+        gallery=gallery_mode,
+        video_duration=video_duration,
+        video_resolution=video_resolution,
+        resolution_error=resolution_error,
+        video_op=video_op,
+        video_source_url=video_source_url,
+        pay_amount=pay_amount,
+        pay_test_amount=pay_test_amount,
+        pay_error=pay_error,
+        credit_target=credit_target,
+        credit_amount=credit_amount,
+        upload_requested=upload_requested,
+        source_image=source_image,
+        reference_images=reference_images,
+        voices=voices,
+    )
+
+
+def split_brackets(text: str) -> tuple[str, str]:
+    """Split prompt text into (display_text, prompt_text) using the bracket syntax.
+
+    Also used for Continue-button follow-ups, which skip flag parsing but keep
+    the hidden/shown directives.
+    """
     # Parse [hidden] (sent to LLM, stripped from channel display) and
     # ]shown[ (shown in channel, stripped from LLM input) via a single
     # left-to-right walk so the closing ] of a [hidden] pair isn't
@@ -291,34 +326,4 @@ def parse_command(input_str: str) -> ParsedCommand:
 
     display_text = " ".join(display_text.split())
     prompt_text = " ".join(prompt_text.split())
-
-    mode = "video" if video_mode else "image" if image_mode else "text"
-    if len(pay_flags) > 1:
-        pay_error = "Use -pay for real credits or -pay-test for sandbox testing in separate commands."
-    return ParsedCommand(
-        mode=mode,
-        display_text=display_text,
-        prompt_text=prompt_text,
-        emoji_mode=emoji_mode,
-        potato_mode=potato_mode,
-        bufo_mode=bufo_mode,
-        backend_override=backend_override,
-        usage=usage_mode,
-        report=report_mode,
-        gallery=gallery_mode,
-        video_duration=video_duration,
-        video_resolution=video_resolution,
-        resolution_error=resolution_error,
-        video_op=video_op,
-        video_source_url=video_source_url,
-        pay_amount=pay_amount,
-        pay_test_amount=pay_test_amount,
-        pay_error=pay_error,
-        credit_target=credit_target,
-        credit_amount=credit_amount,
-        conversation=conversation_mode,
-        upload_requested=upload_requested,
-        source_image=source_image,
-        reference_images=reference_images,
-        voices=voices,
-    )
+    return display_text, prompt_text

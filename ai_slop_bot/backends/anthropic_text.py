@@ -4,7 +4,6 @@ import os
 
 import anthropic
 
-import conversations
 import model_config
 from usage import GenerationResult, estimate_text_cost
 
@@ -13,15 +12,14 @@ class AnthropicProvider:
     """Text generation using Anthropic Claude."""
 
     def chat(self, system: str, messages: list[dict]) -> GenerationResult:
-        """Generate a completion given a multi-turn message history."""
+        """Generate the next reply for a user/assistant message history."""
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         model = model_config.get_model("text", "anthropic")
-        api_msgs = conversations.to_anthropic(messages)
         message = client.messages.create(
             model=model,
             max_tokens=4096,
             system=system,
-            messages=api_msgs,
+            messages=list(messages),
             thinking={"type": "disabled"},
         )
         input_tokens = message.usage.input_tokens
@@ -37,5 +35,5 @@ class AnthropicProvider:
         )
 
     def generate(self, system: str, prompt: str) -> GenerationResult:
-        """Single-shot generation; thin wrapper around chat()."""
-        return self.chat(system, [conversations.synth_user_message(prompt)])
+        """Single-shot generation: a one-message chat."""
+        return self.chat(system, [{"role": "user", "content": prompt}])

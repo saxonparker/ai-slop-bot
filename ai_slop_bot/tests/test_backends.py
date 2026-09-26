@@ -91,9 +91,7 @@ def test_gemini_text_generate(mock_client_cls):
     assert result.output_tokens == 12
     mock_client_cls.assert_called_once_with(api_key="fake-key")
     call_kwargs = mock_client.models.generate_content.call_args
-    assert call_kwargs.kwargs["contents"] == [
-        {"role": "user", "parts": [{"text": "What is 2+2?"}]},
-    ]
+    assert call_kwargs.kwargs["contents"] == "What is 2+2?"
     assert call_kwargs.kwargs["config"] == {"system_instruction": "Be helpful"}
 
 
@@ -887,119 +885,6 @@ def test_gemini_video_rejects_voices():
         GeminiProvider().generate("chatter", voices=["eve"])
 
 
-# ── chat() multi-turn ───────────────────────────────────────────────────────
-
-def _u(text):
-    return {"role": "user", "prompt_text": text}
-
-
-def _a(text):
-    return {"role": "assistant", "content": text}
-
-
-@patch.dict("os.environ", {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("backends.anthropic_text.anthropic.Anthropic")
-def test_anthropic_chat_passes_history(mock_anthropic_cls):
-    from backends.anthropic_text import AnthropicProvider
-
-    mock_client = MagicMock()
-    mock_anthropic_cls.return_value = mock_client
-    mock_block = MagicMock(type="text", text="follow-up reply")
-    mock_message = MagicMock(content=[mock_block])
-    mock_message.usage.input_tokens = 50
-    mock_message.usage.output_tokens = 10
-    mock_client.messages.create.return_value = mock_message
-
-    history = [_u("first"), _a("first reply"), _u("second")]
-    result = AnthropicProvider().chat("be helpful", history)
-
-    assert result.content == "follow-up reply"
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    assert call_kwargs["system"] == "be helpful"
-    assert call_kwargs["messages"] == [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "first reply"},
-        {"role": "user", "content": "second"},
-    ]
-
-
-@patch.dict("os.environ", {"OPENAI_ORGANIZATION": "fake-org", "OPENAI_API_KEY": "fake-key"})
-@patch("backends.openai_text.OpenAI")
-def test_openai_chat_with_history(mock_openai_cls):
-    from backends.openai_text import OpenAIProvider
-
-    mock_client = MagicMock()
-    mock_openai_cls.return_value = mock_client
-    mock_choice = MagicMock()
-    mock_choice.message.content = "follow-up"
-    mock_response = MagicMock(choices=[mock_choice])
-    mock_response.usage.prompt_tokens = 30
-    mock_response.usage.completion_tokens = 5
-    mock_client.chat.completions.create.return_value = mock_response
-
-    history = [_u("first"), _a("first reply"), _u("second")]
-    OpenAIProvider().chat("be helpful", history)
-
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["messages"] == [
-        {"role": "system", "content": "be helpful"},
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "first reply"},
-        {"role": "user", "content": "second"},
-    ]
-
-
-@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
-@patch("backends.grok_text.OpenAI")
-def test_grok_chat_with_history(mock_openai_cls):
-    from backends.grok_text import GrokProvider
-
-    mock_client = MagicMock()
-    mock_openai_cls.return_value = mock_client
-    mock_choice = MagicMock()
-    mock_choice.message.content = "follow-up"
-    mock_response = MagicMock(choices=[mock_choice])
-    mock_response.usage.prompt_tokens = 30
-    mock_response.usage.completion_tokens = 5
-    mock_client.chat.completions.create.return_value = mock_response
-
-    history = [_u("first"), _a("first reply"), _u("second")]
-    GrokProvider().chat("be helpful", history)
-
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["messages"] == [
-        {"role": "system", "content": "be helpful"},
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "first reply"},
-        {"role": "user", "content": "second"},
-    ]
-
-
-@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
-@patch("backends.gemini_text.genai.Client")
-def test_gemini_chat_uses_model_role_and_parts(mock_client_cls):
-    from backends.gemini_text import GeminiProvider
-
-    mock_client = MagicMock()
-    mock_client_cls.return_value = mock_client
-    mock_response = MagicMock(text="follow-up")
-    mock_response.usage_metadata.prompt_token_count = 20
-    mock_response.usage_metadata.thoughts_token_count = 0
-    mock_response.usage_metadata.candidates_token_count = 4
-    mock_client.models.generate_content.return_value = mock_response
-
-    history = [_u("first"), _a("first reply"), _u("second")]
-    GeminiProvider().chat("be helpful", history)
-
-    call_kwargs = mock_client.models.generate_content.call_args.kwargs
-    assert call_kwargs["config"] == {"system_instruction": "be helpful"}
-    assert call_kwargs["contents"] == [
-        {"role": "user", "parts": [{"text": "first"}]},
-        {"role": "model", "parts": [{"text": "first reply"}]},
-        {"role": "user", "parts": [{"text": "second"}]},
-    ]
-
-
 @patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
 @patch("backends.grok_video.requests")
 def test_grok_video_failed_raises(mock_requests):
@@ -1432,3 +1317,97 @@ def test_grok_video_http_failure_estimate_uses_the_resolution(
         GrokProvider().generate("a corgi surfing", duration=10, resolution=resolution)
 
     assert exc_info.value.cost_estimate == pytest.approx(10 * rate)
+
+
+# ── chat() multi-turn ───────────────────────────────────────────────────────
+
+HISTORY = [
+    {"role": "user", "content": "first"},
+    {"role": "assistant", "content": "first reply"},
+    {"role": "user", "content": "second"},
+]
+
+
+@patch.dict("os.environ", {"ANTHROPIC_API_KEY": "fake-key"})
+@patch("backends.anthropic_text.anthropic.Anthropic")
+def test_anthropic_chat_passes_history(mock_anthropic_cls):
+    from backends.anthropic_text import AnthropicProvider
+
+    mock_client = MagicMock()
+    mock_anthropic_cls.return_value = mock_client
+    mock_message = MagicMock(content=[MagicMock(type="text", text="follow-up reply")])
+    mock_message.usage.input_tokens = 50
+    mock_message.usage.output_tokens = 10
+    mock_client.messages.create.return_value = mock_message
+
+    result = AnthropicProvider().chat("be helpful", HISTORY)
+
+    assert result.content == "follow-up reply"
+    call_kwargs = mock_client.messages.create.call_args.kwargs
+    assert call_kwargs["system"] == "be helpful"
+    assert call_kwargs["messages"] == HISTORY
+
+
+@patch.dict("os.environ", {"OPENAI_ORGANIZATION": "fake-org", "OPENAI_API_KEY": "fake-key"})
+@patch("backends.openai_text.OpenAI")
+def test_openai_chat_prepends_system(mock_openai_cls):
+    from backends.openai_text import OpenAIProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_choice = MagicMock()
+    mock_choice.message.content = "follow-up"
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 30
+    mock_response.usage.completion_tokens = 5
+    mock_client.chat.completions.create.return_value = mock_response
+
+    OpenAIProvider().chat("be helpful", HISTORY)
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["messages"] == [{"role": "system", "content": "be helpful"}] + HISTORY
+
+
+@patch.dict("os.environ", {"XAI_API_KEY": "fake-key"})
+@patch("backends.grok_text.OpenAI")
+def test_grok_chat_prepends_system(mock_openai_cls):
+    from backends.grok_text import GrokProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    mock_choice = MagicMock()
+    mock_choice.message.content = "follow-up"
+    mock_response = MagicMock(choices=[mock_choice])
+    mock_response.usage.prompt_tokens = 30
+    mock_response.usage.completion_tokens = 5
+    mock_client.chat.completions.create.return_value = mock_response
+
+    GrokProvider().chat("be helpful", HISTORY)
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["messages"] == [{"role": "system", "content": "be helpful"}] + HISTORY
+
+
+@patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"})
+@patch("backends.gemini_text.genai.Client")
+def test_gemini_chat_converts_roles_and_parts(mock_client_cls):
+    from backends.gemini_text import GeminiProvider
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_response = MagicMock(text="follow-up")
+    mock_response.usage_metadata.prompt_token_count = 20
+    mock_response.usage_metadata.thoughts_token_count = 0
+    mock_response.usage_metadata.candidates_token_count = 4
+    mock_client.models.generate_content.return_value = mock_response
+
+    result = GeminiProvider().chat("be helpful", HISTORY)
+
+    assert result.content == "follow-up"
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    assert call_kwargs["config"] == {"system_instruction": "be helpful"}
+    assert call_kwargs["contents"] == [
+        {"role": "user", "parts": [{"text": "first"}]},
+        {"role": "model", "parts": [{"text": "first reply"}]},
+        {"role": "user", "parts": [{"text": "second"}]},
+    ]
