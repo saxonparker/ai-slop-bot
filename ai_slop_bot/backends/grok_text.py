@@ -4,7 +4,6 @@ import os
 
 from openai import OpenAI
 
-import conversations
 import model_config
 from usage import (
     GenerationResult,
@@ -19,21 +18,20 @@ from usage import (
 class GrokProvider:
     """Text generation using xAI Grok."""
 
-    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
-        """Generate a completion given a multi-turn message history."""
+    def generate(self, system: str, prompt: str) -> GenerationResult:
         client = OpenAI(
             api_key=os.environ["XAI_API_KEY"],
             base_url="https://api.x.ai/v1",
         )
         model = model_config.get_model("text", "grok")
-        api_msgs = []
+        messages = []
         if len(system) > 0:
-            api_msgs.append({"role": "system", "content": system})
-        api_msgs.extend(conversations.to_openai_chat(messages))
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         # Preserve the old non-reasoning workload when replacing its retired ID.
         options = {"reasoning_effort": "none"} if model == "grok-4.3" else {}
         try:
-            response = client.chat.completions.create(model=model, messages=api_msgs, **options)
+            response = client.chat.completions.create(model=model, messages=messages, **options)
         except Exception as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
             error_type, user_message = classify_xai_error(exc)
@@ -61,7 +59,3 @@ class GrokProvider:
             cost_actual=cost_actual,
             cost_in_usd_ticks=cost_ticks,
         )
-
-    def generate(self, system: str, prompt: str) -> GenerationResult:
-        """Single-shot generation; thin wrapper around chat()."""
-        return self.chat(system, [conversations.synth_user_message(prompt)])

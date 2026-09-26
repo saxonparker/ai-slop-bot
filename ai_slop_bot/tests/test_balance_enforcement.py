@@ -4,14 +4,13 @@ import json
 import sys
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 sys.path.append(".")
 
 import ai_slop_bot
-import conversations
 from usage import GenerationResult
 
 
@@ -29,49 +28,28 @@ def bot(monkeypatch):
         "resolve_images": ("media_refs.resolve_reference_images", []),
         "resolve_video": ("media_refs.resolve_reference_video", None),
         "bufo_names": ("bufo.get_bufo_emoji_names", ["bufo"]),
-        "enabled": ("conversations.is_enabled", True),
-        "get_conv": ("conversations.get", None),
-        "create_conv": ("conversations.create", None),
-        "lock": ("conversations.acquire_lock", True),
-        "unlock": ("conversations.release_lock", None),
-        "append": ("conversations.append_turn", True),
     }
     with ExitStack() as stack:
         mocks = SimpleNamespace(**{
             name: stack.enter_context(patch(f"ai_slop_bot.{target}", return_value=value))
             for name, (target, value) in targets.items()
         })
-        mocks.slack.get_user_display_name.return_value = "bob"
-        mocks.slack.post_text_chat_postmessage.return_value = "1700.0"
         result = GenerationResult("generated", "grok", "test-model", 1, 1, 0.01)
         for mode in ("text", "image", "video"):
             provider = getattr(mocks.providers, f"get_{mode}_provider").return_value
             provider.generate.return_value = result
-            provider.chat.return_value = result
         yield mocks
 
 
-def invoke(prompt, *, source="slash", **payload):
+def invoke(prompt, **payload):
     message = {
-        "prompt": prompt, "user": "bob", "source": source,
+        "prompt": prompt, "user": "bob", "source": "slash",
         "channel_id": "C", "channel_name": "general",
-        "response_url": "https://hooks/x" if source == "slash" else "",
-        "thread_ts": "1700.0" if source == "event_mention" else "",
+        "response_url": "https://hooks/x",
         **payload,
     }
     event = {"Records": [{"Sns": {"Message": json.dumps(message)}}]}
     ai_slop_bot.ai_slop_bot(event, SimpleNamespace(aws_request_id="req-A"))
-
-
-def existing_conversation():
-    return conversations.Conversation(
-        conversation_id="C:1700.0", channel_id="C", thread_ts="1700.0",
-        created_by="alice", created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z", total_chars=100, turn_count=1,
-        messages=[{"role": "user", "prompt_text": "talk about cats"},
-                  {"role": "assistant", "content": "cats are nice"}],
-        schema_version=1,
-    )
 
 
 def test_video_generation_links_slack_file_to_gallery_for_message_shortcut(bot, monkeypatch):
@@ -120,30 +98,19 @@ def test_special_modes_cannot_override_payment_prompt(bot, flag):
 
 
 @pytest.mark.parametrize("balance", [-10.0, -10.01, -50.0])
-@pytest.mark.parametrize("flag", ["", "-i", "-v", "-e", "-bufo", "-p", "-c"])
-@pytest.mark.parametrize("source", ["slash", "event_mention"])
-def test_cutoff_blocks_all_generation(bot, balance, flag, source):
+@pytest.mark.parametrize("flag", ["", "-i", "-v", "-e", "-bufo", "-p"])
+def test_cutoff_blocks_all_generation(bot, balance, flag):
     bot.balance.return_value = balance
-    bot.get_conv.return_value = existing_conversation()
 
-    invoke(f"{flag} a cat", source=source, user="U123" if source == "event_mention" else "bob")
+    invoke(f"{flag} a cat")
 
     bot.balance.assert_called_once_with("bob")
     assert bot.providers.mock_calls == []
     bot.record.assert_not_called()
     bot.failed.assert_not_called()
-    bot.lock.assert_not_called()
-    bot.create_conv.assert_not_called()
-    bot.append.assert_not_called()
-    if source == "slash":
-        notice = bot.slack.post_ephemeral
-        bot.slack.post_thread_notice.assert_not_called()
-        assert notice.call_args.args[0] == "https://hooks/x"
-    else:
-        notice = bot.slack.post_thread_notice
-        bot.slack.post_ephemeral.assert_not_called()
-        assert notice.call_args.args[:2] == ("C", "1700.0")
+    notice = bot.slack.post_ephemeral
     notice.assert_called_once()
+    assert notice.call_args.args[0] == "https://hooks/x"
     message = notice.call_args.args[-1]
     assert "Pay Saxon money" in message
     assert f"${balance:.2f}" in message
@@ -167,36 +134,6 @@ def test_cutoff_happens_before_uploaded_media_downloads(bot, prompt, payload):
     bot.resolve_images.assert_not_called()
     bot.resolve_video.assert_not_called()
     bot.upload.assert_not_called()
-
-
-@pytest.mark.parametrize("balance", [-4.99, -5.0, -9.99])
-@pytest.mark.parametrize("continuation", [False, True])
-def test_conversation_uses_requesters_balance_and_saves_effective_prompt(bot, balance, continuation):
-    bot.balance.return_value = balance
-    if continuation:
-        bot.get_conv.return_value = existing_conversation()
-
-    invoke("more cats" if continuation else "-c more cats",
-           source="event_mention" if continuation else "slash")
-
-    bot.balance.assert_called_once_with("bob")
-    provider = bot.providers.get_text_provider.return_value
-    provider.chat.assert_called_once()
-    messages = provider.chat.call_args.args[1]
-    current = messages[-1]
-    assert current["user"] == "bob"
-    assert current["display_text"] == "more cats"
-    if balance <= -5.0:
-        assert "pay saxon money" in current["prompt_text"].lower()
-        assert "more cats" not in current["prompt_text"]
-    else:
-        assert current["prompt_text"] == "more cats"
-    if continuation:
-        assert messages[:-1] == existing_conversation().messages
-        assert bot.append.call_args.args[1] == current
-        bot.unlock.assert_called_once()
-    else:
-        assert bot.create_conv.call_args.kwargs["first_user_msg"] == current
 
 
 @pytest.mark.parametrize("command", ["-pay 20", "-pay-test 20", "-u", "-g", "--report", "--credit bob 20"])
@@ -309,18 +246,6 @@ def test_mixed_payment_flags_cannot_credit_live_balance(bot, command):
     assert "separate commands" in bot.slack.post_ephemeral.call_args.args[-1]
 
 
-@pytest.mark.parametrize("command", ["--credit alice 500", "--report"])
-def test_mention_display_name_cannot_authorize_admin_commands(bot, command):
-    bot.slack.get_user_display_name.return_value = "saxon"
-    with patch("ai_slop_bot.budget.ADMIN_USERS", {"saxon"}), \
-         patch("ai_slop_bot.budget.add_credit") as credit, \
-         patch("ai_slop_bot.budget.get_all_balances") as report:
-        invoke(command, source="event_mention", user="UATTACKER")
-    credit.assert_not_called()
-    report.assert_not_called()
-    assert "slash command" in bot.slack.post_thread_notice.call_args.args[-1]
-
-
 def test_balance_is_checked_again_after_credits_are_added(bot):
     bot.balance.side_effect = [-10.0, 0.0]
 
@@ -342,11 +267,3 @@ def test_unknown_balance_does_not_allow_generation(bot):
     bot.record.assert_not_called()
     bot.slack.post_error.assert_called_once()
     assert "Could not retrieve your balance" in bot.slack.post_error.call_args.args[1]
-
-
-def test_untracked_text_mention_is_ignored_without_balance_lookup(bot):
-    invoke("a cat", source="event_mention")
-
-    bot.balance.assert_not_called()
-    assert bot.providers.mock_calls == []
-    bot.slack.post_thread_notice.assert_not_called()

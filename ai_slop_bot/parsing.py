@@ -20,7 +20,6 @@ _LONG_FLAGS = {
     "--gallery",
     "--pay",
     "--pay-test",
-    "--conversation",
     "--upload",
     "--edit",
     "--edit-video",
@@ -74,7 +73,6 @@ class ParsedCommand:
     pay_error: str | None = None
     credit_target: str | None = None
     credit_amount: float | None = None
-    conversation: bool = False
     upload_requested: bool = False
     source_image: media_refs.ReferenceImage | None = None
     reference_images: list[media_refs.ReferenceImage] = field(default_factory=list)
@@ -107,7 +105,6 @@ def parse_command(input_str: str) -> ParsedCommand:
     video_source_url = None
     credit_target = None
     credit_amount = None
-    conversation_mode = False
     upload_requested = False
     source_image = None
     reference_images = []
@@ -169,8 +166,6 @@ def parse_command(input_str: str) -> ParsedCommand:
                 except InvalidOperation:
                     prompt_tokens.append(token)
                     prompt_tokens.append(tokens[i])
-        elif lower in ("-c", "--conversation"):
-            conversation_mode = True
         elif lower == "--upload":
             upload_requested = True
         elif lower in ("--edit-video", "--extend-video"):
@@ -316,7 +311,6 @@ def parse_command(input_str: str) -> ParsedCommand:
         pay_error=pay_error,
         credit_target=credit_target,
         credit_amount=credit_amount,
-        conversation=conversation_mode,
         upload_requested=upload_requested,
         source_image=source_image,
         reference_images=reference_images,

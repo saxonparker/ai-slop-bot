@@ -113,8 +113,6 @@ Step 6 is the explicit cutover: `-pay` begins requiring verified payment before
 adding credits. Before it, `-pay` retains the existing Venmo honor-system behavior.
 Sandbox app credentials and webhook registration cannot trigger this switch.
 Existing credits, generation limits, and admin adjustments still work.
-Admin reports and credit adjustments must use the slash command; a mention's
-editable display name cannot authorize an admin operation.
 Each dollar captured purchases one dollar of bot credit; PayPal processing fees
 reduce the merchant's proceeds, not the credited amount.
 
