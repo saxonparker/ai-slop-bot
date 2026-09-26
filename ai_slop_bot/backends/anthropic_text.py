@@ -11,14 +11,15 @@ from usage import GenerationResult, estimate_text_cost
 class AnthropicProvider:
     """Text generation using Anthropic Claude."""
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+        """Generate the next reply for a user/assistant message history."""
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         model = model_config.get_model("text", "anthropic")
         message = client.messages.create(
             model=model,
             max_tokens=4096,
             system=system,
-            messages=[{"role": "user", "content": prompt}],
+            messages=list(messages),
             thinking={"type": "disabled"},
         )
         input_tokens = message.usage.input_tokens
@@ -32,3 +33,7 @@ class AnthropicProvider:
             output_tokens=output_tokens,
             cost_estimate=cost,
         )
+
+    def generate(self, system: str, prompt: str) -> GenerationResult:
+        """Single-shot generation: a one-message chat."""
+        return self.chat(system, [{"role": "user", "content": prompt}])

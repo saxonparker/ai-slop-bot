@@ -832,3 +832,101 @@ def test_upload_modal_submission_rejects_resolution_on_gemini(mock_boto):
     assert body["response_action"] == "errors"
     assert "backend_block" in body["errors"]
     mock_sns.publish.assert_not_called()
+
+
+# ── Continue-button conversations ───────────────────────────────────────────
+
+def _continue_metadata(opened_at=1_000_000):
+    return {
+        "conversation_id": "conv1",
+        "response_url": "https://hooks.slack.example/button",
+        "channel_id": "C123",
+        "channel_name": "general",
+        "opened_at": opened_at,
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic", "SLACK_BOT_TOKEN": "xoxb-token"})
+@patch("ai_slop_dispatch.time.time", return_value=1_000_000)
+@patch("ai_slop_dispatch.urllib.request.urlopen")
+@patch("ai_slop_dispatch.boto3.client")
+def test_continue_button_opens_prompt_modal(mock_boto, mock_urlopen, _mock_time):
+    mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+    payload = {
+        "type": "block_actions",
+        "trigger_id": "trig",
+        "response_url": "https://hooks.slack.example/button",
+        "channel": {"id": "C123", "name": "general"},
+        "user": {"id": "U1", "username": "alice"},
+        "actions": [{"action_id": "conversation_continue", "value": "conv1"}],
+    }
+
+    response = ai_slop_dispatch.dispatch(_interaction_request(payload), None)
+
+    assert response["statusCode"] == "200"
+    mock_boto.return_value.publish.assert_not_called()
+    request = mock_urlopen.call_args.args[0]
+    assert request.full_url.endswith("/views.open")
+    body = json.loads(request.data.decode("utf-8"))
+    assert body["trigger_id"] == "trig"
+    view = body["view"]
+    assert view["callback_id"] == "ai_slop_continue"
+    assert json.loads(view["private_metadata"]) == _continue_metadata()
+    assert [block["block_id"] for block in view["blocks"]] == ["prompt_block"]
+    assert view["blocks"][0]["element"]["multiline"] is True
+
+
+def _continue_submission(prompt, opened_at=1_000_000, user=None):
+    return {
+        "type": "view_submission",
+        "user": user if user is not None else {"id": "U1", "username": "alice"},
+        "view": {
+            "callback_id": "ai_slop_continue",
+            "private_metadata": json.dumps(_continue_metadata(opened_at)),
+            "state": {"values": {"prompt_block": {"prompt": {"value": prompt}}}},
+        },
+    }
+
+
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.time.time", return_value=1_000_060)
+@patch("ai_slop_dispatch.boto3.client")
+def test_continue_submission_publishes_a_conversation_turn(mock_boto, _mock_time):
+    mock_sns = MagicMock()
+    mock_boto.return_value = mock_sns
+
+    response = ai_slop_dispatch.dispatch(_interaction_request(_continue_submission("  more cats ")), None)
+
+    assert json.loads(response["body"]) == {}
+    inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
+    assert json.loads(inner["default"]) == {
+        "source": "conversation",
+        "conversation_id": "conv1",
+        "prompt": "more cats",
+        "user": "alice",
+        "response_url": "https://hooks.slack.example/button",
+        "channel_id": "C123",
+        "channel_name": "general",
+    }
+
+
+@pytest.mark.parametrize("prompt,opened_at,error", [
+    ("   ", 1_000_000, "Enter a prompt."),
+    ("more cats", 1_000_000 - 26 * 60, "expired"),
+])
+@patch.dict("os.environ", {"AI_SLOP_SNS_TOPIC": "arn:aws:sns:::topic"})
+@patch("ai_slop_dispatch.time.time", return_value=1_000_000)
+@patch("ai_slop_dispatch.boto3.client")
+def test_continue_submission_rejects_empty_or_stale_forms(mock_boto, _mock_time, prompt, opened_at, error):
+    response = ai_slop_dispatch.dispatch(
+        _interaction_request(_continue_submission(prompt, opened_at=opened_at)), None,
+    )
+
+    body = json.loads(response["body"])
+    assert body["response_action"] == "errors"
+    assert error in body["errors"]["prompt_block"]
+    mock_boto.return_value.publish.assert_not_called()
+
+
+def test_help_text_mentions_continue_button():
+    assert "Continue" in ai_slop_dispatch.HELP_TEXT

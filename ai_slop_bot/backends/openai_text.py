@@ -22,17 +22,16 @@ def clean_response(text: str) -> str:
 class OpenAIProvider:
     """Text generation using OpenAI ChatGPT."""
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+        """Generate the next reply for a user/assistant message history."""
         client = OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             organization=os.environ["OPENAI_ORGANIZATION"],
         )
         model = model_config.get_model("text", "openai")
-        messages = []
-        if len(system) > 0:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        response = client.chat.completions.create(model=model, messages=messages)
+        api_messages = [{"role": "system", "content": system}] if system else []
+        api_messages.extend(messages)
+        response = client.chat.completions.create(model=model, messages=api_messages)
         reply = response.choices[0].message.content
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
@@ -45,3 +44,7 @@ class OpenAIProvider:
             output_tokens=output_tokens,
             cost_estimate=cost,
         )
+
+    def generate(self, system: str, prompt: str) -> GenerationResult:
+        """Single-shot generation: a one-message chat."""
+        return self.chat(system, [{"role": "user", "content": prompt}])

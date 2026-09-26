@@ -12,11 +12,25 @@ class GeminiProvider:
     """Text generation using Google Gemini."""
 
     def generate(self, system: str, prompt: str) -> GenerationResult:
+        return self._generate(system, prompt)
+
+    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+        """Generate the next reply for a user/assistant message history."""
+        contents = [
+            {
+                "role": "user" if message["role"] == "user" else "model",
+                "parts": [{"text": message["content"]}],
+            }
+            for message in messages
+        ]
+        return self._generate(system, contents)
+
+    def _generate(self, system: str, contents) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         model = model_config.get_model("text", "gemini")
         response = client.models.generate_content(
             model=model,
-            contents=prompt,
+            contents=contents,
             config={"system_instruction": system},
         )
         text = response.text

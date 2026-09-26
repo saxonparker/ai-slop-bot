@@ -8,6 +8,7 @@ import traceback
 
 import budget
 import bufo
+import conversations
 import hall_of_fame
 import image_upload
 import media_refs
@@ -53,6 +54,9 @@ def ai_slop_bot(event, _):
             return
         if source == "link_shared":
             _unfurl_gallery_links(message)
+            return
+        if source == "conversation":
+            _continue_conversation(message, response_url)
             return
         input_str = message["prompt"]
         user = message["user"]
@@ -176,7 +180,8 @@ def ai_slop_bot(event, _):
         if balance <= budget.GENERATION_CUTOFF_BALANCE:
             slack.post_ephemeral(response_url, budget.get_payment_required_message(balance))
             return
-        if balance <= budget.PROMPT_OVERRIDE_BALANCE:
+        overridden = balance <= budget.PROMPT_OVERRIDE_BALANCE
+        if overridden:
             parsed = dataclasses.replace(
                 parsed, prompt_text=prompts.get_payment_prompt(parsed.mode),
                 emoji_mode=False, bufo_mode=False, potato_mode=False,
@@ -306,13 +311,124 @@ def ai_slop_bot(event, _):
         )
         usage.record_usage(user, result)
         print(f"GENERATE TEXT COMPLETE: {result.content}")
-        slack.post_text_response(response_url, user, parsed.display_text, result.content)
+        conversation_id = None if overridden else _start_conversation(parsed, user, channel_id, result)
+        slack.post_text_response(response_url, user, parsed.display_text, result.content,
+                                 actions=_continue_button(conversation_id))
 
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
         traceback.print_exc()
         _post_error_safe(_describe_error_for_user(exc), source=source, response_url=response_url)
     # pylint: enable=broad-except
+
+
+def _continue_button(conversation_id: str | None) -> dict | None:
+    return slack.conversation_action(conversation_id) if conversation_id else None
+
+
+def _start_conversation(parsed, user: str, channel_id: str, result) -> str | None:
+    """Store a text reply's first exchange so it can carry a Continue button.
+
+    Never blocks the reply: any storage failure just yields a button-less post.
+    """
+    if not conversations.is_enabled():
+        return None
+    conversation_id = conversations.new_id()
+    try:
+        conversations.create(
+            conversation_id=conversation_id,
+            channel_id=channel_id,
+            created_by=user,
+            flags={
+                "backend": parsed.backend_override or "",
+                "potato": parsed.potato_mode,
+                "emoji": parsed.emoji_mode,
+            },
+            user_msg=conversations.user_message(parsed.prompt_text, user),
+            assistant_msg=conversations.assistant_message(result.content),
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"CONVERSATION CREATE ERROR: {exc}")
+        return None
+    return conversation_id
+
+
+def _continue_conversation(message: dict, response_url: str):  # pylint: disable=too-many-locals
+    """Run one Continue-button turn: replay history, append the exchange, post a flat reply.
+
+    The submitting user is balance-gated and billed; the first turn's backend,
+    potato, and emoji flags carry over.
+    """
+    user = message["user"]
+    conversation_id = message.get("conversation_id", "")
+    start_hint = f"Start a new one with `{CANONICAL_SLASH_COMMAND} <prompt>`."
+    if not conversations.is_enabled():
+        slack.post_ephemeral(response_url, "Conversations are not enabled.")
+        return
+    item = conversations.get(conversation_id) if conversation_id else None
+    if item is None:
+        slack.post_ephemeral(response_url, f"That conversation is no longer available. {start_hint}")
+        return
+    if conversations.is_full(item["turn_count"], item["messages"]):
+        slack.post_ephemeral(response_url, f"This conversation is full. {start_hint}")
+        return
+
+    flags = item["flags"]
+    text = message.get("prompt", "")
+    if flags.get("emoji"):
+        text += parsing.EMOJI_DIRECTIVE
+    display_text, prompt_text = parsing.split_brackets(text)
+    if not prompt_text:
+        slack.post_ephemeral(response_url, "Enter a prompt.")
+        return
+
+    balance = budget.get_balance(user)
+    if balance <= budget.GENERATION_CUTOFF_BALANCE:
+        slack.post_ephemeral(response_url, budget.get_payment_required_message(balance))
+        return
+    backend_override = flags.get("backend") or None
+    backend = _backend_for_mode("text", backend_override)
+    provider = providers.get_text_provider(backend_override)
+    model = _model_for_request("text", backend)
+    if balance <= budget.PROMPT_OVERRIDE_BALANCE:
+        # The payment reminder replaces the turn and is not added to the transcript.
+        system = prompts.get_system_message(user, False)
+        payment_prompt = prompts.get_payment_prompt("text")
+        result = _provider_call_or_record_failure(
+            user=user, mode="text", backend=backend, model=model, cost_estimate=0.0,
+            call=lambda: provider.generate(system, payment_prompt),
+        )
+        usage.record_usage(user, result)
+        slack.post_text_response(response_url, user, display_text, result.content, actions=None)
+        return
+
+    system = prompts.get_system_message(user, bool(flags.get("potato")))
+    history = [{"role": entry["role"], "content": entry["content"]} for entry in item["messages"]]
+    history.append({"role": "user", "content": prompt_text})
+    print(f"GENERATE TEXT (conversation turn {item['turn_count'] + 1}): {prompt_text}")
+    result = _provider_call_or_record_failure(
+        user=user, mode="text", backend=backend, model=model, cost_estimate=0.0,
+        call=lambda: provider.chat(system, history),
+    )
+    usage.record_usage(user, result)
+    print(f"GENERATE TEXT COMPLETE: {result.content}")
+
+    user_msg = conversations.user_message(prompt_text, user)
+    assistant_msg = conversations.assistant_message(result.content)
+    if not conversations.append_turn(conversation_id, user_msg, assistant_msg, item["turn_count"]):
+        slack.post_ephemeral(
+            response_url,
+            "Someone else continued this conversation at the same time. "
+            "Your turn was not added; click Continue and try again.",
+        )
+        return
+
+    reply = result.content
+    actions = slack.conversation_action(conversation_id)
+    if conversations.is_full(item["turn_count"] + 1, item["messages"] + [user_msg, assistant_msg]):
+        reply += f"\n\n_(This conversation is full. {start_hint})_"
+        actions = None
+    slack.post_text_response(response_url, user, display_text, reply, actions=actions)
 
 
 def _unfurl_gallery_links(message):

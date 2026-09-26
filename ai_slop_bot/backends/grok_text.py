@@ -18,20 +18,19 @@ from usage import (
 class GrokProvider:
     """Text generation using xAI Grok."""
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+        """Generate the next reply for a user/assistant message history."""
         client = OpenAI(
             api_key=os.environ["XAI_API_KEY"],
             base_url="https://api.x.ai/v1",
         )
         model = model_config.get_model("text", "grok")
-        messages = []
-        if len(system) > 0:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        api_messages = [{"role": "system", "content": system}] if system else []
+        api_messages.extend(messages)
         # Preserve the old non-reasoning workload when replacing its retired ID.
         options = {"reasoning_effort": "none"} if model == "grok-4.3" else {}
         try:
-            response = client.chat.completions.create(model=model, messages=messages, **options)
+            response = client.chat.completions.create(model=model, messages=api_messages, **options)
         except Exception as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
             error_type, user_message = classify_xai_error(exc)
@@ -59,3 +58,7 @@ class GrokProvider:
             cost_actual=cost_actual,
             cost_in_usd_ticks=cost_ticks,
         )
+
+    def generate(self, system: str, prompt: str) -> GenerationResult:
+        """Single-shot generation: a one-message chat."""
+        return self.chat(system, [{"role": "user", "content": prompt}])

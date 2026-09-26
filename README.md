@@ -51,6 +51,23 @@ Flags can appear in any order unless a flag consumes the next value.
 - `]shown text[` — shown in Slack but removed from the AI prompt.
   Example: `/slop-bot what's the capital of France? ]asking for a friend[`.
 
+### Conversations
+
+Every plain text reply carries a *Continue* button. Clicking it opens a short
+form; the follow-up is posted in the channel as a new reply with its own
+button, so an exchange can run for many turns without threads or mentions.
+
+- Anyone in the channel can continue a conversation, and each person pays for
+  their own turns under the usual balance rules.
+- The first prompt's `-b`, `-p`, and `-e` choices apply to every later turn;
+  `[hidden]` and `]shown[` bracket syntax still works in follow-ups.
+- `-bufo`, image, and video replies are single-shot and have no button. A
+  payment-reminder reply is never continuable.
+- Conversations stop after 20 turns or roughly 60,000 stored characters and
+  expire 30 days after their last turn. The button stays valid for 30 minutes
+  after it is clicked, so submit the form promptly.
+- Requires `CONVERSATIONS_TABLE_NAME`; without it, replies have no button.
+
 ### Reference images and videos
 
 There are two ways to provide reference media for generated content:
@@ -412,6 +429,7 @@ is promotional through at least November 21, 2026; recheck rates on later review
 | `SLACK_BOT_TOKEN` | — | Slack Web API token for posting responses, uploads, modals, reference downloads, and cleanup |
 | `USAGE_TABLE_NAME` | `ai-slop-usage` | DynamoDB usage table for request records, usage summaries, balances, and audit CLI |
 | `LEDGER_TABLE_NAME` | `ai-slop-ledger` | DynamoDB credit ledger table for payments and admin adjustments |
+| `CONVERSATIONS_TABLE_NAME` | unset | DynamoDB table for Continue-button conversations; replies have no button when unset |
 | `VENMO_USERNAME` | `Saxon-Parker` | Venmo username for the existing -pay flow; verified checkout uses the configured PayPal merchant account |
 | `ADMIN_USERS` | `saxon` | Comma-separated Slack usernames allowed to use budget admin commands |
 | `REFERENCE_IMAGE_MAX_BYTES` | `20971520` | Maximum reference image size before normalization |

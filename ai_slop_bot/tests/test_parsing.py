@@ -240,3 +240,21 @@ def test_credit_invalid_amount():
     result = parsing.parse_command("-credit testuser notanumber")
     assert result.credit_target is None
     assert result.credit_amount is None
+
+
+# ── split_brackets (shared with Continue-button follow-ups) ──────────────────
+
+def test_split_brackets_hidden_and_shown():
+    display, prompt = parsing.split_brackets("tell a joke [about dogs] ]for a friend[")
+    assert display == "tell a joke for a friend"
+    assert prompt == "tell a joke about dogs"
+
+
+def test_split_brackets_lone_brackets():
+    assert parsing.split_brackets("open [secret") == ("open", "open secret")
+    assert parsing.split_brackets("close ] here") == ("close ] here", "close here")
+
+
+def test_emoji_mode_uses_shared_directive():
+    result = parsing.parse_command("-e hi")
+    assert result.prompt_text == "hi" + parsing.EMOJI_DIRECTIVE.replace("[", "").replace("]", "")

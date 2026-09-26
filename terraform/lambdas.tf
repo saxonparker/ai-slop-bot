@@ -140,6 +140,7 @@ resource "aws_lambda_function" "bot" {
       SLACK_BOT_TOKEN                 = var.slack_bot_token
       USAGE_TABLE_NAME                = aws_dynamodb_table.usage.name
       LEDGER_TABLE_NAME               = aws_dynamodb_table.ledger.name
+      CONVERSATIONS_TABLE_NAME        = aws_dynamodb_table.conversations.name
       HALL_OF_FAME_TABLE_NAME         = aws_dynamodb_table.hall_of_fame.name
       GALLERY_MEDIA_TABLE_NAME        = aws_dynamodb_table.gallery_media.name
       VENMO_USERNAME                  = var.venmo_username

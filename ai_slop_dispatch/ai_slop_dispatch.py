@@ -36,6 +36,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -bufo <prompt>` or `{CANONICAL_SLASH_COMMAND} --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewrite using names from bufopedia.com
   `{CANONICAL_SLASH_COMMAND} -p <prompt>` — potato mode (sarcastic & rude)
   `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
+  Every text reply has a *Continue* button — click it to add a follow-up turn. Anyone can continue and pays for their own turns; `-p`, `-e`, and `-b` from the first prompt carry over (`-bufo` is single-shot).
   `{CANONICAL_SLASH_COMMAND} -u` or `{CANONICAL_SLASH_COMMAND} --usage` — show your usage stats and credit balance
   `{CANONICAL_SLASH_COMMAND} -g` or `{CANONICAL_SLASH_COMMAND} --gallery` — show the AI Slop Gallery link
   `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — get credits and payment instructions
@@ -123,6 +124,8 @@ PRESET_VOICES = {
     "sirius": "M", "ursa": "F", "zagan": "M", "zenith": "M",
 }
 MAX_VOICES = 3
+# A Continue button's response_url lives 30 minutes; refuse older modal submissions.
+CONTINUE_MODAL_MAX_AGE_SECONDS = 25 * 60
 
 
 def _normalize_flag_token(token: str) -> str:
@@ -231,6 +234,8 @@ def _handle_interaction(event):
     if payload.get("type") != "view_submission":
         return _json_payload({})
     view = payload.get("view") or {}
+    if view.get("callback_id") == "ai_slop_continue":
+        return _handle_continue_submission(payload, view)
     if view.get("callback_id") != "ai_slop_upload":
         return _json_payload({})
 
@@ -244,6 +249,9 @@ def _handle_interaction(event):
 def _handle_block_action(payload: dict):
     """Update the upload modal when a stateful select changes."""
     for action in payload.get("actions") or []:
+        if action.get("action_id") == "conversation_continue":
+            _open_continue_modal(payload, action.get("value") or "")
+            return _json_payload({})
         if action.get("action_id") in ("hall_of_fame_add", "hall_of_fame_remove"):
             key = hall_of_fame.validate_key(action.get("value"))
             _publish({
@@ -316,6 +324,67 @@ def _handle_event(event):
     if inner.get("type") == "link_shared":
         return _handle_link_shared(inner)
     return _json_response("ok")
+
+
+def _open_continue_modal(payload: dict, conversation_id: str):
+    """Open the follow-up prompt modal for a Continue button click."""
+    channel = payload.get("channel") or {}
+    metadata = {
+        "conversation_id": conversation_id,
+        # The button's response_url posts the reply into the same channel,
+        # so no bot invite or chat.postMessage is needed.
+        "response_url": payload["response_url"],
+        "channel_id": channel.get("id", ""),
+        "channel_name": channel.get("name", ""),
+        "opened_at": int(time.time()),
+    }
+    _slack_api_post("views.open", {
+        "trigger_id": payload["trigger_id"],
+        "view": _continue_view(metadata),
+    })
+
+
+def _continue_view(metadata: dict) -> dict:
+    return {
+        "type": "modal",
+        "callback_id": "ai_slop_continue",
+        "private_metadata": json.dumps(metadata),
+        "title": {"type": "plain_text", "text": "Continue"},
+        "submit": {"type": "plain_text", "text": "Send"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [{
+            "type": "input",
+            "block_id": "prompt_block",
+            "label": {"type": "plain_text", "text": "Follow-up"},
+            "element": _plain_text_input("prompt", multiline=True),
+        }],
+    }
+
+
+def _handle_continue_submission(payload: dict, view: dict):
+    """Publish one conversation turn from the Continue modal."""
+    metadata = json.loads(view.get("private_metadata") or "{}")
+    state = (view.get("state") or {}).get("values") or {}
+    prompt = (_state_value(state, "prompt_block", "prompt").get("value") or "").strip()
+    if not prompt:
+        return _json_payload({"response_action": "errors", "errors": {"prompt_block": "Enter a prompt."}})
+    if time.time() - int(metadata.get("opened_at") or 0) > CONTINUE_MODAL_MAX_AGE_SECONDS:
+        return _json_payload({"response_action": "errors", "errors": {
+            "prompt_block": "This form has expired. Close it and click Continue again.",
+        }})
+    user = payload.get("user") or {}
+    _publish({
+        "source": "conversation",
+        "conversation_id": metadata.get("conversation_id", ""),
+        "prompt": prompt,
+        # `username` is the same handle slash commands deliver as user_name, so
+        # balances and usage line up. Signatures are verified before routing.
+        "user": user.get("username") or user.get("name") or "",
+        "response_url": metadata.get("response_url", ""),
+        "channel_id": metadata.get("channel_id", ""),
+        "channel_name": metadata.get("channel_name", ""),
+    })
+    return _json_payload({})
 
 
 def _handle_link_shared(event: dict):

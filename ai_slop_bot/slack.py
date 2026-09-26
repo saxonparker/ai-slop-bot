@@ -8,12 +8,13 @@ import hall_of_fame
 
 
 def post_text_response(response_url: str, user: str, display: str, response: str,
-                       render_in_block: bool = False):
+                       render_in_block: bool = False, actions: dict | None = None):
     """Post a text response back to Slack.
 
     When render_in_block is set, the response goes in an mrkdwn section block
     (so emoji shortcodes render) instead of a legacy attachment, whose text is
-    not parsed as mrkdwn.
+    not parsed as mrkdwn. `actions` (e.g. conversation_action) renders below
+    the response.
     """
     blocks = [
         {
@@ -33,8 +34,14 @@ def post_text_response(response_url: str, user: str, display: str, response: str
             "type": "section",
             "text": {"type": "mrkdwn", "text": response},
         })
+        if actions:
+            blocks.append(actions)
     else:
         payload["attachments"] = [{"text": response}]
+        if actions:
+            # Top-level blocks render above attachments; a block-only
+            # attachment keeps the button under the response text.
+            payload["attachments"].append({"blocks": [actions]})
     requests.post(
         response_url,
         data=json.dumps(payload),
@@ -65,6 +72,19 @@ def post_image_response(response_url: str, user: str, display: str, image_url: s
         }),
         timeout=10000,
     )
+
+
+def conversation_action(conversation_id: str) -> dict:
+    """Continue button carried by every continuable text reply."""
+    return {
+        "type": "actions",
+        "elements": [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Continue"},
+            "action_id": "conversation_continue",
+            "value": conversation_id,
+        }],
+    }
 
 
 def hall_of_fame_action(key: str, featured: bool = True) -> dict:
