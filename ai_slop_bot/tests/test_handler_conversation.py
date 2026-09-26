@@ -1,15 +1,13 @@
-"""Orchestration tests for ai_slop_bot._handle_continuation_turn and
-_handle_first_turn. Covers happy path, phantom-turn (turn_count moved),
-lock-contention, hard-cap rejection, top-level create-failure warning,
-resolved-backend persistence, and the event-mention path that uses
-chat.postMessage in place of response_url. The conversations / providers
-/ slack / usage modules are mocked at import boundaries.
+"""Continue-button conversations through the Lambda entry point.
+
+Reuses the `bot` fixture and `invoke` helper from test_balance_enforcement so
+providers, Slack, usage, and balance are mocked the same way.
 """
 
-import json
 import sys
-import time
-from unittest.mock import MagicMock, patch
+from contextlib import ExitStack
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -17,856 +15,214 @@ sys.path.append(".")
 
 import ai_slop_bot  # noqa: E402  pylint: disable=wrong-import-position
 import conversations  # noqa: E402  pylint: disable=wrong-import-position
-from media_refs import ReferenceImage, ResolvedImage, ResolvedVideo  # noqa: E402  pylint: disable=wrong-import-position
-from parsing import ParsedCommand  # noqa: E402  pylint: disable=wrong-import-position
+from tests.test_balance_enforcement import bot, invoke  # noqa: E402,F401  pylint: disable=wrong-import-position,unused-import
 
 
-@pytest.fixture(autouse=True)
-def sufficient_balance():
-    """Keep orchestration tests independent of live billing data."""
-    with patch("ai_slop_bot.budget.get_balance", return_value=0.0):
-        yield
+@pytest.fixture
+def conv(monkeypatch, bot):  # pylint: disable=redefined-outer-name
+    monkeypatch.setenv("CONVERSATIONS_TABLE_NAME", "test-conversations")
+    provider = bot.providers.get_text_provider.return_value
+    provider.chat.return_value = provider.generate.return_value
+    targets = {"create": None, "get": None, "append_turn": True, "new_id": "conv1"}
+    with ExitStack() as stack:
+        yield SimpleNamespace(**{
+            name: stack.enter_context(patch(f"ai_slop_bot.conversations.{name}", return_value=value))
+            for name, value in targets.items()
+        })
 
 
-def _parsed(prompt="follow up"):
-    return ParsedCommand(mode="text", display_text=prompt, prompt_text=prompt)
+HISTORY = [
+    {"role": "user", "content": "talk about cats", "user": "alice"},
+    {"role": "assistant", "content": "cats are nice"},
+]
 
 
-def _conv(turn_count=1, total_chars=100):
-    return conversations.Conversation(
-        conversation_id="C:1700.0", channel_id="C", thread_ts="1700.0",
-        created_by="alice", created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
-        total_chars=total_chars, turn_count=turn_count,
-        messages=[{"role": "user", "prompt_text": "hi"},
-                  {"role": "assistant", "content": "hello"}],
-        schema_version=1,
-    )
+def stored(turn_count=1, **flags):
+    return {
+        "conversation_id": "conv1", "channel_id": "C", "created_by": "alice",
+        "turn_count": turn_count, "messages": list(HISTORY),
+        "flags": {"backend": "", "potato": False, "emoji": False, **flags},
+    }
 
 
-def _result(content="follow-up reply"):
-    from usage import GenerationResult
-    return GenerationResult(
-        content=content, backend="anthropic", model="claude-sonnet-4",
-        input_tokens=20, output_tokens=10, cost_estimate=0.001,
-    )
+def continue_turn(prompt, **payload):
+    invoke(prompt, source="conversation", conversation_id="conv1", **payload)
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=True)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_happy_path(mock_acquire, mock_get, mock_append, mock_release,
-                                  _mock_prompts, mock_get_provider, mock_slack,
-                                  mock_record):
-    existing = _conv()
-    mock_get.return_value = existing
-    provider = MagicMock()
-    provider.chat.return_value = _result()
-    mock_get_provider.return_value = provider
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
-
-    mock_acquire.assert_called_once_with("C:1700.0", "req-A")
-    mock_get.assert_called_once_with("C:1700.0", consistent=True)
-    provider.chat.assert_called_once()
-    mock_append.assert_called_once()
-    args = mock_append.call_args.args
-    assert args[0] == "C:1700.0"
-    assert args[3] == len("follow up") + len("follow-up reply")
-    assert args[4] == 1
-    mock_slack.post_text_response_in_thread.assert_called_once()
-    assert mock_slack.post_error.call_count == 0
-    mock_record.assert_called_once()
-    mock_release.assert_called_once_with("C:1700.0", "req-A")
+def posted(bot):
+    bot.slack.post_text_response.assert_called_once()
+    return bot.slack.post_text_response.call_args
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=False)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_phantom_turn_dropped(mock_acquire, mock_get, mock_append,
-                                            mock_release, _mock_prompts,
-                                            mock_get_provider, mock_slack, mock_record):
-    existing = _conv()
-    mock_get.return_value = existing
-    provider = MagicMock()
-    provider.chat.return_value = _result()
-    mock_get_provider.return_value = provider
+# ── first turn ───────────────────────────────────────────────────────────────
 
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
+def test_first_text_reply_stores_exchange_and_posts_continue_button(bot, conv):
+    invoke("-p -b grok tell a joke [about dogs]")
 
-    mock_append.assert_called_once()
-    mock_slack.post_error.assert_called_once()
-    err_msg = mock_slack.post_error.call_args.args[1]
-    assert "modified by another in-flight turn" in err_msg
-    mock_slack.post_text_response_in_thread.assert_not_called()
-    mock_record.assert_called_once()
-    mock_release.assert_called_once_with("C:1700.0", "req-A")
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn")
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=False)
-@patch("ai_slop_bot.time.sleep")
-def test_continuation_lock_contention_posts_error(mock_sleep, mock_acquire, mock_get,
-                                                   mock_append, mock_release,
-                                                   mock_get_provider, mock_slack,
-                                                   mock_record):
-    existing = _conv()
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
-
-    assert mock_acquire.call_count == 2
-    mock_sleep.assert_called_once_with(conversations.LOCK_RETRY_SLEEP_SECONDS)
-    mock_get.assert_not_called()
-    mock_get_provider.assert_not_called()
-    mock_append.assert_not_called()
-    mock_slack.post_ephemeral.assert_called_once()
-    msg = mock_slack.post_ephemeral.call_args.args[1]
-    assert "in flight" in msg
-    mock_release.assert_not_called()
-    mock_record.assert_not_called()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn")
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_rejects_when_reserve_would_overflow(mock_acquire, mock_get,
-                                                          mock_append, mock_release,
-                                                          mock_get_provider, mock_slack,
-                                                          mock_record):
-    # total_chars + new_chars + ASSISTANT_RESERVE_CHARS exceeds the cap.
-    headroom = conversations.CONVERSATION_MAX_CHARS - conversations.ASSISTANT_RESERVE_CHARS
-    existing = _conv(turn_count=2, total_chars=headroom)
-    mock_get.return_value = existing
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed("x"), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
-
-    mock_get_provider.assert_not_called()
-    mock_append.assert_not_called()
-    mock_slack.post_error.assert_called_once()
-    msg = mock_slack.post_error.call_args.args[1]
-    assert "reached its limit" in msg
-    mock_release.assert_called_once()
-    mock_record.assert_not_called()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn")
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_rejects_when_max_turns_reached(mock_acquire, mock_get, mock_append,
-                                                     mock_release, mock_get_provider,
-                                                     mock_slack, mock_record):
-    existing = _conv(turn_count=conversations.MAX_TURNS, total_chars=10)
-    mock_get.return_value = existing
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
-
-    mock_get_provider.assert_not_called()
-    mock_append.assert_not_called()
-    mock_slack.post_error.assert_called_once()
-    mock_release.assert_called_once()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=True)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_aborts_before_model_call_when_near_lambda_timeout(
-    mock_acquire, mock_get, mock_append, mock_release, _mock_prompts,
-    mock_get_provider, mock_slack, mock_record,
-):
-    existing = _conv()
-    mock_get.return_value = existing
-    # Pretend the lambda started long ago, well past the abort threshold.
-    fake_start = time.time() - (conversations.IN_HANDLER_ABORT_SECONDS + 30)
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=fake_start,
-    )
-
-    mock_get_provider.assert_not_called()
-    mock_append.assert_not_called()
-    mock_slack.post_error.assert_called_once()
-    msg = mock_slack.post_error.call_args.args[1]
-    assert "Lambda timeout" in msg
-    mock_release.assert_called_once()
-    mock_record.assert_not_called()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.create")
-def test_first_turn_top_level_warns_on_create_failure(mock_create, _mock_prompts,
-                                                      mock_get_provider, mock_slack,
-                                                      mock_record):
-    provider = MagicMock()
-    provider.chat.return_value = _result()
-    mock_get_provider.return_value = provider
-    mock_slack.post_text_chat_postmessage.return_value = "1700.0"
-    mock_create.side_effect = RuntimeError("dynamodb down")
-
-    with pytest.raises(RuntimeError, match="dynamodb down"):
-        ai_slop_bot._handle_first_turn(
-            parsed=_parsed("hello"), user="alice", channel_id="C",
-            response_url="https://hooks/x",
-            lambda_start=time.time(),
-        )
-
-    mock_slack.post_text_chat_postmessage.assert_called_once()
-    mock_slack.post_thread_notice.assert_called_once()
-    notice_kwargs = mock_slack.post_thread_notice.call_args.kwargs
-    assert notice_kwargs["thread_ts"] == "1700.0"
-    assert "Could not start conversation tracking" in notice_kwargs["text"]
-    mock_record.assert_called_once()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.create")
-def test_first_turn_top_level_persists_resolved_backend(mock_create, _mock_prompts,
-                                                        mock_get_provider, mock_slack,
-                                                        mock_record):
-    provider = MagicMock()
-    provider.chat.return_value = _result()  # backend="anthropic"
-    mock_get_provider.return_value = provider
-    mock_slack.post_text_chat_postmessage.return_value = "1700.0"
-
-    parsed_no_override = _parsed("hello")
-    assert parsed_no_override.backend_override is None
-
-    ai_slop_bot._handle_first_turn(
-        parsed=parsed_no_override, user="alice", channel_id="C",
-        response_url="https://hooks/x",
-        lambda_start=time.time(),
-    )
-
-    create_kwargs = mock_create.call_args.kwargs
-    assert create_kwargs["first_user_msg"]["backend"] == "anthropic"
-    mock_record.assert_called_once()
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=True)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_persists_resolved_backend(mock_acquire, mock_get, mock_append,
-                                                 mock_release, _mock_prompts,
-                                                 mock_get_provider, mock_slack,
-                                                 mock_record):
-    existing = _conv()
-    mock_get.return_value = existing
-    provider = MagicMock()
-    provider.chat.return_value = _result()  # backend="anthropic"
-    mock_get_provider.return_value = provider
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="bob", response_url="https://hooks/x",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-    )
-
-    user_msg = mock_append.call_args.args[1]
-    assert user_msg["backend"] == "anthropic"
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=True)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_event_mention_posts_via_chat_postmessage(
-    _mock_acquire, mock_get, _mock_append, _mock_release, _mock_prompts,
-    mock_get_provider, mock_slack, _mock_record,
-):
-    existing = _conv()
-    mock_get.return_value = existing
-    provider = MagicMock()
-    provider.chat.return_value = _result()
-    mock_get_provider.return_value = provider
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="alice", response_url="",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-        channel_id="C", source="event_mention",
-    )
-
-    mock_slack.post_text_chat_postmessage.assert_called_once()
-    mock_slack.post_text_response_in_thread.assert_not_called()
-    kwargs = mock_slack.post_text_chat_postmessage.call_args.kwargs
+    kwargs = conv.create.call_args.kwargs
+    assert kwargs["conversation_id"] == "conv1"
     assert kwargs["channel_id"] == "C"
-    assert kwargs["thread_ts"] == "1700.0"
+    assert kwargs["created_by"] == "bob"
+    assert kwargs["flags"] == {"backend": "grok", "potato": True, "emoji": False}
+    assert kwargs["user_msg"] == {"role": "user", "content": "tell a joke about dogs", "user": "bob"}
+    assert kwargs["assistant_msg"] == {"role": "assistant", "content": "generated"}
+    bot.slack.conversation_action.assert_called_once_with("conv1")
+    call = posted(bot)
+    assert call.args[:4] == ("https://hooks/x", "bob", "tell a joke", "generated")
+    assert call.kwargs["actions"] is bot.slack.conversation_action.return_value
 
 
-@patch("ai_slop_bot.usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.conversations.is_enabled", return_value=True)
-def test_event_mention_text_without_conversation_is_ignored_silently(
-    _mock_enabled, mock_get_provider, mock_slack, _mock_usage,
-):
-    sns_message = {
-        "response_url": "", "channel_id": "C", "channel_name": "",
-        "thread_ts": "1700.0", "prompt": "hello",
-        "user": "U123", "event_user_id": "U123",
-        "source": "event_mention",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-    mock_slack.get_user_display_name.return_value = "alice"
-
-    with patch("ai_slop_bot.conversations.get", return_value=None):
-        ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    mock_get_provider.assert_not_called()
-    mock_slack.post_text_chat_postmessage.assert_not_called()
-    mock_slack.post_thread_notice.assert_not_called()
-    mock_slack.post_ephemeral.assert_not_called()
+def test_emoji_flag_is_stored_for_later_turns(bot, conv):
+    invoke("-e how are you")
+    assert conv.create.call_args.kwargs["flags"]["emoji"] is True
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_image_provider")
-@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://img/url")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-def test_event_mention_image_posts_in_thread(
-    _mock_sanitize, _mock_upload, mock_get_provider, mock_slack, _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"img-bytes")
-    mock_get_provider.return_value = provider
-
-    sns_message = {
-        "response_url": "", "channel_id": "C", "channel_name": "",
-        "thread_ts": "1700.0", "prompt": "-i a cat",
-        "user": "U123", "event_user_id": "U123",
-        "source": "event_mention",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-    mock_slack.get_user_display_name.return_value = "alice"
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    mock_slack.post_image_response_in_thread.assert_called_once()
-    args = mock_slack.post_image_response_in_thread.call_args.args
-    assert args[0] == "C"
-    assert args[1] == "alice"
-    assert args[4] == "1700.0"
-    mock_slack.post_image_response.assert_not_called()
+def test_no_button_when_conversations_are_not_configured(bot, monkeypatch):
+    monkeypatch.delenv("CONVERSATIONS_TABLE_NAME", raising=False)
+    with patch("ai_slop_bot.conversations.create") as create:
+        invoke("tell a joke")
+    create.assert_not_called()
+    assert posted(bot).kwargs["actions"] is None
 
 
-@patch("ai_slop_bot.usage.record_failed_request")
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_image_provider")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-def test_image_provider_failure_records_failed_request(
-    _mock_sanitize, mock_get_provider, mock_slack, mock_record, mock_failed,
-):
-    provider = MagicMock()
-    provider.generate.side_effect = RuntimeError("blocked by moderation")
-    mock_get_provider.return_value = provider
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "", "prompt": "-i make art", "user": "alice",
-        "source": "slash",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    mock_record.assert_not_called()
-    mock_failed.assert_called_once()
-    args = mock_failed.call_args.args
-    kwargs = mock_failed.call_args.kwargs
-    assert args[0] == "alice"
-    assert kwargs["mode"] == "image"
-    assert kwargs["backend"] == "grok"
-    assert kwargs["error_type"] == "moderation"
-    assert kwargs["cost_estimate"] == 0.04
-    mock_slack.post_error.assert_called_once()
+def test_reply_still_posts_when_the_row_write_fails(bot, conv):
+    conv.create.side_effect = RuntimeError("dynamodb down")
+    invoke("tell a joke")
+    assert posted(bot).kwargs["actions"] is None
+    bot.slack.post_error.assert_not_called()
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_image_provider")
-@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://img/url")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-@patch("ai_slop_bot.media_refs.resolve_reference_images")
-def test_image_payload_references_are_resolved_and_passed_to_provider(
-    mock_resolve, _mock_sanitize, _mock_upload, mock_get_provider, _mock_slack,
-    _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"img-bytes")
-    mock_get_provider.return_value = provider
-    resolved = [ResolvedImage(data=b"ref", mime_type="image/jpeg")]
-    mock_resolve.return_value = resolved
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "", "prompt": "-i make art", "user": "alice",
-        "source": "slash",
-        "reference_images": [{"source": "slack_file", "value": "F123", "role": "edit"}],
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    provider.generate.assert_called_once_with("make art", references=resolved)
+@pytest.mark.parametrize("prompt", ["-bufo hello there", "-i a cat", "-v a cat"])
+def test_non_conversation_modes_store_nothing(bot, conv, prompt):
+    invoke(prompt)
+    conv.create.assert_not_called()
+    bot.slack.conversation_action.assert_not_called()
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_video_provider")
-@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-@patch("ai_slop_bot.media_refs.resolve_reference_images", return_value=[])
-@patch("ai_slop_bot.media_refs.resolve_reference_image")
-def test_video_start_image_is_resolved_and_passed_to_provider(
-    mock_resolve_one, _mock_resolve_many, _mock_sanitize, _mock_upload,
-    mock_get_provider, _mock_slack, _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"video-bytes")
-    mock_get_provider.return_value = provider
-    resolved = ResolvedImage(data=b"ref", mime_type="image/jpeg")
-    mock_resolve_one.return_value = resolved
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "", "prompt": "-v 10 make it move", "user": "alice",
-        "source": "slash",
-        "reference_images": [{"source": "slack_file", "value": "F123", "role": "start"}],
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
+def test_payment_reminder_replies_are_not_continuable(bot, conv):
+    bot.balance.return_value = -5.0
+    invoke("tell a joke")
+    conv.create.assert_not_called()
+    assert posted(bot).kwargs["actions"] is None
 
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
 
-    provider.generate.assert_called_once_with(
-        "make it move",
-        duration=10,
-        source_image=resolved,
-        references=[],
-        voices=[],
-        video_op=None,
-        video_url=None,
-        resolution=None,
+# ── continuation ─────────────────────────────────────────────────────────────
+
+def test_continuation_replays_history_with_first_turn_flags(bot, conv):
+    conv.get.return_value = stored(backend="grok", potato=True)
+    with patch("ai_slop_bot.prompts.get_system_message", return_value="be spuddy") as system:
+        continue_turn("more cats [make it rhyme]")
+
+    conv.get.assert_called_once_with("conv1")
+    bot.balance.assert_called_once_with("bob")
+    system.assert_called_once_with("bob", True)
+    bot.providers.get_text_provider.assert_called_once_with("grok")
+    provider = bot.providers.get_text_provider.return_value
+    provider.generate.assert_not_called()
+    provider.chat.assert_called_once()
+    assert provider.chat.call_args.args[0] == "be spuddy"
+    assert provider.chat.call_args.args[1] == [
+        {"role": "user", "content": "talk about cats"},
+        {"role": "assistant", "content": "cats are nice"},
+        {"role": "user", "content": "more cats make it rhyme"},
+    ]
+    bot.record.assert_called_once()
+    assert bot.record.call_args.args[0] == "bob"
+    conv.append_turn.assert_called_once_with(
+        "conv1",
+        {"role": "user", "content": "more cats make it rhyme", "user": "bob"},
+        {"role": "assistant", "content": "generated"},
+        1,
     )
+    call = posted(bot)
+    assert call.args[:4] == ("https://hooks/x", "bob", "more cats", "generated")
+    assert call.kwargs["actions"] is bot.slack.conversation_action.return_value
+    bot.slack.conversation_action.assert_called_once_with("conv1")
 
 
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_video_provider")
-@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-@patch("ai_slop_bot.media_refs.resolve_reference_images")
-@patch("ai_slop_bot.media_refs.resolve_reference_image")
-def test_video_edit_is_passed_to_provider_without_image_refs(
-    mock_resolve_one, mock_resolve_many, _mock_sanitize, mock_upload,
-    mock_get_provider, _mock_slack, _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"video-bytes")
-    mock_get_provider.return_value = provider
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "",
-        "prompt": "-v --edit-video https://example.com/source.mp4 make it rain",
-        "user": "alice", "source": "slash",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    with patch.dict("ai_slop_bot.os.environ", {"VIDEO_BACKEND": "grok"}):
-        ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    mock_resolve_one.assert_not_called()
-    mock_resolve_many.assert_not_called()
-    provider.generate.assert_called_once_with(
-        "make it rain",
-        duration=None,
-        source_image=None,
-        references=[],
-        voices=[],
-        video_op="edit",
-        video_url="https://example.com/source.mp4",
-        resolution=None,
-    )
-    assert mock_upload.call_args.kwargs["extension"] == "mp4"
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_video_provider")
-@patch(
-    "ai_slop_bot.image_upload.upload_to_s3",
-    side_effect=["https://cdn.example/source.mp4", "https://cdn.example/generated.mp4"],
-)
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-@patch("ai_slop_bot.media_refs.resolve_reference_images")
-@patch("ai_slop_bot.media_refs.resolve_reference_image")
-@patch("ai_slop_bot.media_refs.resolve_reference_video")
-def test_uploaded_source_video_is_uploaded_and_passed_to_provider(
-    mock_resolve_video, mock_resolve_one, mock_resolve_many, _mock_sanitize,
-    mock_upload, mock_get_provider, _mock_slack, _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"video-bytes")
-    mock_get_provider.return_value = provider
-    mock_resolve_video.return_value = ResolvedVideo(
-        data=b"source-video",
-        mime_type="video/mp4",
-        extension="mp4",
-        role="edit",
-        source="slack_file",
-        file_id="FV123",
-    )
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "general",
-        "thread_ts": "", "prompt": "-v 12 -b grok make it rain",
-        "user": "alice", "source": "slash",
-        "source_video": {
-            "source": "slack_file",
-            "value": "FV123",
-            "role": "edit",
-            "mime_type": "video/mp4",
-            "filename": "source.mp4",
-        },
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-A"))
-
-    mock_resolve_one.assert_not_called()
-    mock_resolve_many.assert_not_called()
-    mock_resolve_video.assert_called_once()
-    first_upload = mock_upload.call_args_list[0]
-    assert first_upload.args[:2] == ("make it rain", b"source-video")
-    assert first_upload.kwargs["extension"] == "mp4"
-    assert first_upload.kwargs["model"] == "source-video"
-    assert first_upload.kwargs["s3_prefix"] == ai_slop_bot.image_upload.SOURCE_VIDEO_PREFIX
-    assert first_upload.kwargs["add_to_manifest"] is False
-    provider.generate.assert_called_once_with(
-        "make it rain",
-        duration=12,
-        source_image=None,
-        references=[],
-        voices=[],
-        video_op="edit",
-        video_url="https://cdn.example/source.mp4",
-        resolution=None,
-    )
-    assert mock_upload.call_args_list[1].kwargs["extension"] == "mp4"
-
-
-def test_video_edit_rejects_image_references():
-    parsed = ParsedCommand(
-        mode="video",
-        video_op="edit",
-        video_source_url="https://example.com/source.mp4",
-    )
-    reference = ReferenceImage(
-        source="url",
-        value="https://example.com/frame.jpg",
-        role="reference",
-    )
-
-    error = ai_slop_bot._validate_media_references(parsed, None, [reference])
-
-    assert error == "--edit-video/--extend-video cannot be combined with --start, --ref, or --edit."
-
-
-@pytest.mark.parametrize(
-    ("video_op", "source_ref", "reference_refs"),
-    [
-        (
-            "edit",
-            ReferenceImage(source="url", value="https://example.com/start.jpg", role="start"),
-            [],
-        ),
-        (
-            "edit",
-            None,
-            [ReferenceImage(source="url", value="https://example.com/ref.jpg", role="reference")],
-        ),
-        (
-            "extend",
-            ReferenceImage(source="url", value="https://example.com/start.jpg", role="start"),
-            [],
-        ),
-        (
-            "extend",
-            None,
-            [ReferenceImage(source="url", value="https://example.com/ref.jpg", role="reference")],
-        ),
-    ],
-)
-def test_video_edit_extend_rejects_start_and_ref_references(
-    video_op, source_ref, reference_refs,
-):
-    parsed = ParsedCommand(
-        mode="video",
-        video_op=video_op,
-        video_source_url="https://example.com/source.mp4",
-        backend_override="grok",
-    )
-
-    error = ai_slop_bot._validate_media_references(parsed, source_ref, reference_refs)
-
-    assert error == "--edit-video/--extend-video cannot be combined with --start, --ref, or --edit."
-
-
-@pytest.mark.parametrize("video_op", ["edit", "extend"])
-def test_video_edit_extend_rejects_non_grok_backend_override(video_op):
-    parsed = ParsedCommand(
-        mode="video",
-        video_op=video_op,
-        video_source_url="https://example.com/source.mp4",
-        backend_override="gemini",
-    )
-
-    error = ai_slop_bot._validate_media_references(parsed, None, [])
-
-    assert error == "Video edit/extend is only supported on the grok backend; use -b grok."
-
-
-@pytest.mark.parametrize("video_op", ["edit", "extend"])
-def test_video_edit_extend_accepts_grok_backend_override(monkeypatch, video_op):
-    monkeypatch.setenv("VIDEO_BACKEND", "gemini")
-    parsed = ParsedCommand(
-        mode="video",
-        video_op=video_op,
-        video_source_url="https://example.com/source.mp4",
-        backend_override="grok",
-    )
-
-    error = ai_slop_bot._validate_media_references(parsed, None, [])
-
-    assert error is None
-
-
-def test_video_extend_rejects_non_grok_backend(monkeypatch):
-    monkeypatch.setenv("VIDEO_BACKEND", "gemini")
-    parsed = ParsedCommand(
-        mode="video",
-        video_op="extend",
-        video_source_url="https://example.com/source.mp4",
-    )
-
-    error = ai_slop_bot._validate_media_references(parsed, None, [])
-
-    assert error == "Video edit/extend is only supported on the grok backend; use -b grok."
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_text_provider")
-@patch("ai_slop_bot.prompts.get_system_message", return_value="be helpful")
-@patch("ai_slop_bot.conversations.release_lock")
-@patch("ai_slop_bot.conversations.append_turn", return_value=False)
-@patch("ai_slop_bot.conversations.get")
-@patch("ai_slop_bot.conversations.acquire_lock", return_value=True)
-def test_continuation_event_mention_phantom_drop_posts_thread_notice(
-    _mock_acquire, mock_get, _mock_append, _mock_release, _mock_prompts,
-    mock_get_provider, mock_slack, _mock_record,
-):
-    existing = _conv()
-    mock_get.return_value = existing
-    provider = MagicMock()
-    provider.chat.return_value = _result()
-    mock_get_provider.return_value = provider
-
-    ai_slop_bot._handle_continuation_turn(
-        parsed=_parsed(), user="alice", response_url="",
-        thread_ts="1700.0", existing_conv=existing,
-        request_id="req-A", lambda_start=time.time(),
-        channel_id="C", source="event_mention",
-    )
-
-    mock_slack.post_thread_notice.assert_called_once()
-    notice_args = mock_slack.post_thread_notice.call_args.args
-    assert notice_args[0] == "C"
-    assert notice_args[1] == "1700.0"
-    assert "modified by another in-flight turn" in notice_args[2]
-    mock_slack.post_error.assert_not_called()
-
-
-# ── _describe_error_for_user ─────────────────────────────────────────────────
-
-def test_describe_error_uses_provider_user_message():
-    from usage import ProviderGenerationError
-
-    exc = ProviderGenerationError(
-        "raw provider text", backend="grok", error_type="moderation",
-        user_message="Grok declined to generate this — flagged by content moderation.",
-    )
-    assert ai_slop_bot._describe_error_for_user(exc) == (
-        "Grok declined to generate this — flagged by content moderation."
-    )
-
-
-def test_describe_error_falls_back_to_raw_message():
-    exc = RuntimeError("some unrelated bug")
-    assert ai_slop_bot._describe_error_for_user(exc) == "some unrelated bug"
-
-
-def test_describe_error_appends_billed_cost():
-    from usage import ProviderGenerationError
-
-    exc = ProviderGenerationError(
-        "raw provider text", backend="grok", error_type="moderation",
-        user_message="Grok declined to generate this.",
-        cost_actual=0.05,
-    )
-    assert ai_slop_bot._describe_error_for_user(exc) == (
-        "Grok declined to generate this. Cost: $0.05"
-    )
-
-
-def test_describe_error_omits_cost_when_unbilled():
-    from usage import ProviderGenerationError
-
-    exc = ProviderGenerationError(
-        "raw provider text", backend="grok", error_type="invalid_request",
-        user_message="Grok rejected the request as malformed.",
-    )
-    assert ai_slop_bot._describe_error_for_user(exc) == (
-        "Grok rejected the request as malformed."
-    )
-
-
-def test_resolution_passes_validation_for_grok_video():
-    parsed = ParsedCommand(mode="video", video_resolution="720p")
-    assert ai_slop_bot._validate_video_resolution(parsed) is None
-
-
-def test_resolution_validation_surfaces_the_parse_error():
-    parsed = ParsedCommand(mode="video", resolution_error="bad resolution")
-    assert ai_slop_bot._validate_video_resolution(parsed) == "bad resolution"
-
-
-@pytest.mark.parametrize("mode", ["text", "image"])
-def test_resolution_is_rejected_outside_video_mode(mode):
-    parsed = ParsedCommand(mode=mode, video_resolution="720p")
-    assert ai_slop_bot._validate_video_resolution(parsed) == "-r can only be used with -v."
-
-
-@pytest.mark.parametrize("video_op", ["edit", "extend"])
-def test_resolution_is_rejected_for_video_edit_and_extend(video_op):
-    parsed = ParsedCommand(mode="video", video_resolution="720p", video_op=video_op)
-    assert ai_slop_bot._validate_video_resolution(parsed) == (
-        "-r cannot be combined with --edit-video or --extend-video."
-    )
-
-
-def test_resolution_is_rejected_on_the_gemini_backend():
-    parsed = ParsedCommand(mode="video", video_resolution="720p", backend_override="gemini")
-    assert ai_slop_bot._validate_video_resolution(parsed) == (
-        "-r is only supported on the grok backend; use -b grok."
-    )
-
-
-@patch.dict("os.environ", {"VIDEO_BACKEND": "gemini"})
-def test_resolution_is_rejected_when_gemini_is_the_env_default():
-    parsed = ParsedCommand(mode="video", video_resolution="720p")
-    assert ai_slop_bot._validate_video_resolution(parsed) == (
-        "-r is only supported on the grok backend; use -b grok."
-    )
-
-
-@patch("ai_slop_bot.usage.record_usage")
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_video_provider")
-@patch("ai_slop_bot.image_upload.upload_to_s3", return_value="https://vid/url")
-@patch("ai_slop_bot.prompts.sanitize_prompt", side_effect=lambda p, *_, **__: p)
-@patch("ai_slop_bot.media_refs.resolve_reference_images", return_value=[])
-def test_video_resolution_flag_reaches_the_provider(
-    _mock_resolve_many, _mock_sanitize, _mock_upload,
-    mock_get_provider, mock_slack, _mock_record,
-):
-    provider = MagicMock()
-    provider.generate.return_value = _result(content=b"video-bytes")
-    mock_get_provider.return_value = provider
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "", "prompt": "-v -r 720 a corgi surfing", "user": "alice",
-        "source": "slash",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-R"))
-
-    assert provider.generate.call_args.kwargs["resolution"] == "720p"
-    assert mock_slack.post_video_response.called
-
-
-@patch("ai_slop_bot.slack")
-@patch("ai_slop_bot.providers.get_video_provider")
-def test_bad_video_resolution_never_reaches_the_provider(mock_get_provider, mock_slack):
-    sns_message = {
-        "response_url": "https://hooks/x", "channel_id": "C", "channel_name": "",
-        "thread_ts": "", "prompt": "-v -r 1440 a corgi surfing", "user": "alice",
-        "source": "slash",
-    }
-    event = {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
-
-    ai_slop_bot.ai_slop_bot(event, MagicMock(aws_request_id="req-R2"))
-
-    mock_get_provider.assert_not_called()
-    assert "480, 720, or 1080" in mock_slack.post_ephemeral.call_args.args[1]
+def test_continuation_reapplies_emoji_mode_and_default_backend(bot, conv):
+    conv.get.return_value = stored(emoji=True)
+    continue_turn("more cats")
+
+    bot.providers.get_text_provider.assert_called_once_with(None)
+    history = bot.providers.get_text_provider.return_value.chat.call_args.args[1]
+    assert history[-1]["content"] == "more cats Respond only with emojis. No text."
+    assert posted(bot).args[2] == "more cats"
+
+
+def test_missing_conversation_gets_an_ephemeral_notice(bot, conv):
+    conv.get.return_value = None
+    continue_turn("more cats")
+
+    assert bot.providers.mock_calls == []
+    bot.balance.assert_not_called()
+    bot.slack.post_text_response.assert_not_called()
+    assert "no longer available" in bot.slack.post_ephemeral.call_args.args[1]
+
+
+def test_lost_append_race_asks_the_user_to_retry(bot, conv):
+    conv.get.return_value = stored()
+    conv.append_turn.return_value = False
+    continue_turn("more cats")
+
+    bot.record.assert_called_once()
+    bot.slack.post_text_response.assert_not_called()
+    assert "try again" in bot.slack.post_ephemeral.call_args.args[1]
+
+
+def test_last_allowed_turn_drops_the_button(bot, conv):
+    conv.get.return_value = stored(turn_count=conversations.MAX_TURNS - 1)
+    continue_turn("more cats")
+
+    call = posted(bot)
+    assert call.kwargs["actions"] is None
+    assert "full" in call.args[3]
+    assert call.args[3].startswith("generated")
+
+
+def test_full_conversation_refuses_new_turns(bot, conv):
+    conv.get.return_value = stored(turn_count=conversations.MAX_TURNS)
+    continue_turn("more cats")
+
+    assert bot.providers.mock_calls == []
+    conv.append_turn.assert_not_called()
+    assert "full" in bot.slack.post_ephemeral.call_args.args[1]
+
+
+def test_cutoff_balance_blocks_a_continuation(bot, conv):
+    conv.get.return_value = stored()
+    bot.balance.return_value = -10.0
+    continue_turn("more cats")
+
+    assert bot.providers.mock_calls == []
+    conv.append_turn.assert_not_called()
+    assert "Pay Saxon money" in bot.slack.post_ephemeral.call_args.args[1]
+
+
+def test_override_balance_sends_payment_prompt_without_touching_history(bot, conv):
+    conv.get.return_value = stored(potato=True)
+    bot.balance.return_value = -5.0
+    continue_turn("more cats")
+
+    provider = bot.providers.get_text_provider.return_value
+    provider.chat.assert_not_called()
+    provider.generate.assert_called_once()
+    assert "pay saxon money" in provider.generate.call_args.args[1].lower()
+    bot.record.assert_called_once()
+    conv.append_turn.assert_not_called()
+    call = posted(bot)
+    assert call.args[2] == "more cats"
+    assert call.kwargs["actions"] is None
+
+
+def test_provider_failure_is_recorded_and_not_appended(bot, conv):
+    conv.get.return_value = stored()
+    bot.providers.get_text_provider.return_value.chat.side_effect = RuntimeError("boom")
+    continue_turn("more cats")
+
+    bot.failed.assert_called_once()
+    assert bot.failed.call_args.kwargs["mode"] == "text"
+    bot.record.assert_not_called()
+    conv.append_turn.assert_not_called()
+    bot.slack.post_text_response.assert_not_called()
+    bot.slack.post_error.assert_called_once()

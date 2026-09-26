@@ -13,16 +13,11 @@ slash-command payloads to the `/ai-slop` HTTP route during deployment.
 - `/slop-bot -e <prompt>` — emoji-only text response
 - `/slop-bot -bufo <prompt>` or `/slop-bot --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com
 - `/slop-bot -p <prompt>` — potato mode
-- `/slop-bot -c <prompt>` or `/slop-bot --conversation <prompt>` — start a multi-turn text conversation in a thread
-- `@slop-bot <prompt>` (in a conversation thread) — continue the conversation
 - `/slop-bot -b gemini <prompt>` — text with a specific backend
 - `/slop-bot -i -b openai <prompt>` — image with a specific backend
 - `/slop-bot -v -b grok <prompt>` — video with a specific backend
 - `/slop-bot -v -b gemini <prompt>` — video with Veo (native audio/dialogue)
 - `/slop-bot -v -r 720 <prompt>` — video at a chosen resolution (Grok only)
-
-Slack does not allow slash commands inside threads, so conversation
-follow-ups are made by `@`-mentioning the bot in the thread instead.
 
 ### Flags
 
@@ -33,7 +28,6 @@ Flags can appear in any order unless a flag consumes the next value.
 - `-e` — emoji-only response.
 - `-bufo`, `--bufo` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com.
 - `-p` — potato mode.
-- `-c`, `--conversation` — start a text-only conversation in a Slack thread.
 - `-b <backend>` — override the backend for the selected mode.
 - `-u`, `--usage` — show your usage stats and credit balance.
 - `-g`, `--gallery` — show the AI Slop Gallery link.
@@ -56,6 +50,23 @@ Flags can appear in any order unless a flag consumes the next value.
   Example: `/slop-bot tell me a joke [make it about dogs]`.
 - `]shown text[` — shown in Slack but removed from the AI prompt.
   Example: `/slop-bot what's the capital of France? ]asking for a friend[`.
+
+### Conversations
+
+Every plain text reply carries a *Continue* button. Clicking it opens a short
+form; the follow-up is posted in the channel as a new reply with its own
+button, so an exchange can run for many turns without threads or mentions.
+
+- Anyone in the channel can continue a conversation, and each person pays for
+  their own turns under the usual balance rules.
+- The first prompt's `-b`, `-p`, and `-e` choices apply to every later turn;
+  `[hidden]` and `]shown[` bracket syntax still works in follow-ups.
+- `-bufo`, image, and video replies are single-shot and have no button. A
+  payment-reminder reply is never continuable.
+- Conversations stop after 20 turns or roughly 60,000 stored characters and
+  expire 30 days after their last turn. The button stays valid for 30 minutes
+  after it is clicked, so submit the form promptly.
+- Requires `CONVERSATIONS_TABLE_NAME`; without it, replies have no button.
 
 ### Reference images and videos
 
@@ -140,35 +151,6 @@ at 720p, and the request never states it, so those are estimated at that cap.
 Recorded actual cost still comes from the response's `cost_in_usd_ticks` when
 present; these rates are the pre-flight and failed-attempt estimates.
 
-## Conversations
-
-`/slop-bot -c <prompt>` starts a text-only conversation by posting the first
-answer as a top-level Slack message and storing the transcript against that
-thread. Slack slash commands cannot be used inside threads, so follow-up turns
-must mention the bot in the thread with `@slop-bot <prompt>`. Conversation mode
-cannot be combined with `-i` or `-v`.
-
-Conversations require `CONVERSATIONS_TABLE_NAME`. If that environment variable
-is unset, `-c` returns "Conversations are not enabled in this environment." and
-thread mentions do not continue history. The DynamoDB row is keyed by
-`conversation_id`, composed as `channel_id:thread_ts`, and stores the full
-transcript in one item so every turn can replay history to the selected text
-backend.
-
-Continuation limits are enforced before provider calls:
-
-- `CONVERSATION_MAX_CHARS` defaults to `200000` total stored characters.
-- `ASSISTANT_RESERVE_CHARS` defaults to `16000`, reserved as response headroom
-  before accepting another turn.
-- `CONVERSATION_MAX_TURNS` defaults to `100` user/assistant turns.
-- A warning footer appears after roughly 80% of the character cap.
-
-Each continuation turn takes a per-conversation DynamoDB lock
-(`lock_holder`/`lock_expires_at`) before reading and appending history. The bot
-retries once after two seconds when the lock is busy; fresh locks expire after
-360 seconds. Appends also check the previous `turn_count` so an overlapping turn
-cannot corrupt the transcript.
-
 ## Budget & Credits
 
 Balances are calculated as:
@@ -211,9 +193,8 @@ Before each generation, the bot checks the requesting user's balance:
   explains how to add credits with `/slop-bot -pay <amount>` and pay through the
   returned payment link (Venmo by default, verified checkout after the live switch).
 
-These limits also apply to uploaded media requests and each participant's
-conversation turns. Usage, payment, gallery, and authorized admin commands
-remain available. Adding credits restores normal prompts once the balance is
+These limits also apply to uploaded media requests. Usage, payment, gallery,
+and authorized admin commands remain available. Adding credits restores normal prompts once the balance is
 above -$5. If the balance cannot be retrieved, generation waits for a retry.
 The check uses recorded costs before the request; an in-flight request can
 still push the balance past a threshold.
@@ -445,13 +426,10 @@ is promotional through at least November 21, 2026; recheck rates on later review
 | `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2.5-sunburst` | OpenAI model used when reference images are supplied |
 | `OPENAI_ORGANIZATION` | — | Required if using openai backends |
 | `XAI_API_KEY` | — | Required if using grok backends |
-| `SLACK_BOT_TOKEN` | — | Slack Web API token for posting responses, uploads, modals, reference downloads, cleanup, and user lookup |
+| `SLACK_BOT_TOKEN` | — | Slack Web API token for posting responses, uploads, modals, reference downloads, and cleanup |
 | `USAGE_TABLE_NAME` | `ai-slop-usage` | DynamoDB usage table for request records, usage summaries, balances, and audit CLI |
 | `LEDGER_TABLE_NAME` | `ai-slop-ledger` | DynamoDB credit ledger table for payments and admin adjustments |
-| `CONVERSATIONS_TABLE_NAME` | unset | DynamoDB conversation table; conversations are disabled when unset |
-| `CONVERSATION_MAX_CHARS` | `200000` | Maximum stored transcript characters per conversation |
-| `ASSISTANT_RESERVE_CHARS` | `16000` | Reserved transcript headroom before accepting a continuation turn |
-| `CONVERSATION_MAX_TURNS` | `100` | Maximum user/assistant turns per conversation |
+| `CONVERSATIONS_TABLE_NAME` | unset | DynamoDB table for Continue-button conversations; replies have no button when unset |
 | `VENMO_USERNAME` | `Saxon-Parker` | Venmo username for the existing -pay flow; verified checkout uses the configured PayPal merchant account |
 | `ADMIN_USERS` | `saxon` | Comma-separated Slack usernames allowed to use budget admin commands |
 | `REFERENCE_IMAGE_MAX_BYTES` | `20971520` | Maximum reference image size before normalization |
@@ -509,13 +487,13 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
    - **Slash command** Request URL: `<base_url>/ai-slop`
      - Usage Hint:
        ```text
-       /slop-bot <prompt> | -i | -v [sec] | -c/--conversation | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --voice <voice-id> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -bufo/--bufo | -p | -u | -pay <amt>
+       /slop-bot <prompt> | -i | -v [sec] | -g/--gallery | --upload | --edit [img-url] | --ref/--start <img-url> | --voice <voice-id> | --edit-video/--extend-video <video-url> | -b <backend> | -e | -bufo/--bufo | -p | -u | -pay <amt>
        ```
    - **Interactivity & Shortcuts** → Enable Interactivity
      - Request URL: `<base_url>/slack/interactions`
    - **Event Subscriptions** → Enable Events
      - Request URL: `<base_url>/slack/events`
-     - Subscribe to bot events: `app_mention`, `link_shared`
+     - Subscribe to bot event: `link_shared`
      - **App Unfurl Domains**: `d2jagmvo7k5q5j.cloudfront.net`. Use this exact
        host; `cloudfront.net` would claim every CloudFront link in the
        workspace. The app then answers previews for every link on the host:
@@ -525,18 +503,10 @@ Infrastructure is managed with Terraform. CI/CD runs via GitHub Actions on push 
      - `commands` - receive slash commands
      - `files:read` - read uploaded reference images and source videos
      - `files:write` - upload generated videos and delete temporary reference/source files
-     - `app_mentions:read` — receive `@slop-bot` events
-     - `users:read` — resolve user IDs to display names in transcripts
      - `links:read` / `links:write` — preview gallery links (`link_shared`, `chat.unfurl`)
      - `links.embed:write` — play gallery videos inline in those previews
    - Reinstall the app to your workspace after changing scopes; copy the
      new Bot User OAuth Token into the `slack_bot_token` Terraform variable.
-   - Invite the bot to any channel where users will `@`-mention it
-     (`/invite @slop-bot`).
-
-   Note: neither endpoint currently verifies Slack request signatures —
-   adding `X-Slack-Signature` verification with `SLACK_SIGNING_SECRET` is
-   a follow-up.
 
 ### Manual deploy
 

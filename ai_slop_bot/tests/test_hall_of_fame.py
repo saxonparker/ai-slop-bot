@@ -175,11 +175,6 @@ def test_generated_images_have_no_visible_curation_controls(storage, monkeypatch
         payload = json.loads(post.call_args.kwargs["data"])
         assert [block["type"] for block in payload["blocks"]] == ["section", "image"]
         assert hall_of_fame.key_from_slack_message(payload) == KEY
-        slack.post_image_response_in_thread("C123", "alice", "a cat", url, "123.456")
-        payload = json.loads(post.call_args.kwargs["data"])
-        assert [block["type"] for block in payload["blocks"]] == ["section", "image"]
-        assert hall_of_fame.key_from_slack_message(payload) == KEY
-        assert payload["thread_ts"] == "123.456"
 
 
 def test_video_shortcut_resolves_registered_slack_file(storage):

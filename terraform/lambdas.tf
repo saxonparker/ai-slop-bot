@@ -67,21 +67,14 @@ resource "aws_iam_role_policy" "bot_dynamodb" {
   role = aws_iam_role.bot.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:Scan"]
-        Resource = [
-          aws_dynamodb_table.usage.arn,
-          aws_dynamodb_table.ledger.arn,
-        ]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"]
-        Resource = aws_dynamodb_table.conversations.arn
-      },
-    ]
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:Scan"]
+      Resource = [
+        aws_dynamodb_table.usage.arn,
+        aws_dynamodb_table.ledger.arn,
+      ]
+    }]
   })
 }
 
@@ -150,7 +143,6 @@ resource "aws_lambda_function" "bot" {
       CONVERSATIONS_TABLE_NAME        = aws_dynamodb_table.conversations.name
       HALL_OF_FAME_TABLE_NAME         = aws_dynamodb_table.hall_of_fame.name
       GALLERY_MEDIA_TABLE_NAME        = aws_dynamodb_table.gallery_media.name
-      CONVERSATION_MAX_CHARS          = "200000"
       VENMO_USERNAME                  = var.venmo_username
       ADMIN_USERS                     = var.admin_users
       PAYPAL_ENVIRONMENT              = "live"
