@@ -4,6 +4,7 @@ Reuses the `bot` fixture and `invoke` helper from test_balance_enforcement so
 providers, Slack, usage, and balance are mocked the same way.
 """
 
+import json
 import sys
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ sys.path.append(".")
 
 import ai_slop_bot  # noqa: E402  pylint: disable=wrong-import-position
 import conversations  # noqa: E402  pylint: disable=wrong-import-position
+import slack  # noqa: E402  pylint: disable=wrong-import-position
 from tests.test_balance_enforcement import bot, invoke  # noqa: E402,F401  pylint: disable=wrong-import-position,unused-import
 
 
@@ -226,3 +228,20 @@ def test_provider_failure_is_recorded_and_not_appended(bot, conv):
     conv.append_turn.assert_not_called()
     bot.slack.post_text_response.assert_not_called()
     bot.slack.post_error.assert_called_once()
+
+
+# ── Slack payload ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("render_in_block", [False, True])
+def test_text_replies_never_replace_the_clicked_message(render_in_block):
+    with patch("slack.requests.post") as post:
+        slack.post_text_response(
+            "https://hooks/button", "bob", "more cats", "even more cats",
+            render_in_block=render_in_block, actions=slack.conversation_action("conv1"),
+        )
+
+    payload = json.loads(post.call_args.kwargs["data"])
+    assert payload["response_type"] == "in_channel"
+    assert payload["replace_original"] is False
+    button = (payload["blocks"][-1] if render_in_block else payload["attachments"][-1]["blocks"][0])
+    assert button["elements"][0]["value"] == "conv1"

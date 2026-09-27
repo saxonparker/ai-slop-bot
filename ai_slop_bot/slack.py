@@ -27,6 +27,7 @@ def post_text_response(response_url: str, user: str, display: str, response: str
     ]
     payload = {
         "response_type": "in_channel",
+        "replace_original": False,
         "blocks": blocks,
     }
     if render_in_block:
