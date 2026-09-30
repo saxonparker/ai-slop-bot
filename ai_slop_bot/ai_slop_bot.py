@@ -9,6 +9,7 @@ import traceback
 import budget
 import bufo
 import conversations
+import emoji_maker
 import hall_of_fame
 import image_upload
 import media_refs
@@ -57,6 +58,9 @@ def ai_slop_bot(event, _):
             return
         if source == "conversation":
             _continue_conversation(message, response_url)
+            return
+        if source == "make_emoji":
+            _make_emoji(message)
             return
         input_str = message["prompt"]
         user = message["user"]
@@ -442,6 +446,17 @@ def _unfurl_gallery_links(message):
         slack.post_gallery_unfurls(message, items)
 
 
+def _make_emoji(message):
+    """Privately hand back an emoji-sized copy of the photo in a message."""
+    key = hall_of_fame.key_from_slack_message(message["slack_message"])
+    if key is None or key.lower().endswith(hall_of_fame.VIDEO_EXTENSIONS):
+        slack.post_ephemeral(message["response_url"],
+                             "Choose a message with one generated photo to make an emoji.")
+        return
+    slack.post_emoji_result(message["response_url"], emoji_maker.create(key),
+                            message.get("team_domain", ""))
+
+
 def _describe_error_for_user(exc: Exception) -> str:
     """Human-readable error text for Slack, falling back to the raw message.
 
@@ -461,6 +476,8 @@ def _post_error_safe(text, *, source, response_url):
     try:
         if source in ("hall_of_fame", "hall_of_fame_shortcut") and response_url:
             slack.post_ephemeral(response_url, "Could not confirm the Hall of Fame change. Please check the gallery.")
+        elif source == "make_emoji" and response_url:
+            slack.post_ephemeral(response_url, "Could not make an emoji from that photo. Please try again.")
         elif response_url:
             slack.post_error(response_url, text)
     # pylint: disable=broad-except

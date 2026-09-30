@@ -23,6 +23,11 @@ import hall_of_fame
 
 CANONICAL_SLASH_COMMAND = "/slop-bot"
 HTTP_SLASH_ROUTE = "/ai-slop"
+# Message shortcut callback IDs configured in the Slack app -> bot message source.
+MESSAGE_SHORTCUT_SOURCES = {
+    "hall_of_fame_add": "hall_of_fame_shortcut",
+    "make_emoji": "make_emoji",
+}
 
 
 HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
@@ -47,6 +52,9 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
 *Hall of Fame:*
   Use a generated message's *… → Add to Hall of Fame* shortcut to save a favorite.
   Anyone with the gallery link can add or remove picks in its *Hall of Fame* tab.
+
+*Custom emoji:*
+  Use a generated photo's *… → Make emoji* shortcut to get a 128×128 PNG and a link to add it to Slack.
 
 *Flags can be combined:*
   `{CANONICAL_SLASH_COMMAND} -p -i a beautiful sunset` — potato mode image
@@ -222,11 +230,13 @@ def _handle_interaction(event):
         return _json_response("missing interaction payload")
 
     payload = json.loads(raw_payload)
-    if payload.get("type") == "message_action" and payload.get("callback_id") == "hall_of_fame_add":
+    shortcut_source = MESSAGE_SHORTCUT_SOURCES.get(payload.get("callback_id"))
+    if payload.get("type") == "message_action" and shortcut_source:
         _publish({
-            "source": "hall_of_fame_shortcut",
+            "source": shortcut_source,
             "slack_message": payload.get("message") or {},
             "response_url": payload["response_url"],
+            "team_domain": (payload.get("team") or {}).get("domain", ""),
         })
         return _json_payload({})
     if payload.get("type") == "block_actions":

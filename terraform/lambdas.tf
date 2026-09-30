@@ -57,6 +57,7 @@ resource "aws_iam_role_policy" "bot_s3" {
         "arn:aws:s3:::dallepics/dalle/*",
         "arn:aws:s3:::dallepics/source-videos/*",
         "arn:aws:s3:::dallepics/thumbnails/*",
+        "arn:aws:s3:::dallepics/emoji/*",
       ]
     }]
   })

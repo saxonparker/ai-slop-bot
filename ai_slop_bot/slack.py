@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 
 import requests
 import hall_of_fame
@@ -114,6 +115,26 @@ def post_hall_of_fame_result(response_url: str, selection: dict):
             )}},
             hall_of_fame_action(selection["key"], not selection["featured"]),
         ],
+    }, timeout=30)
+    resp.raise_for_status()
+
+
+def post_emoji_result(response_url: str, emoji: dict, team_domain: str = ""):
+    """Privately share the emoji file and where to add it to the workspace."""
+    if re.fullmatch(r"[a-z0-9-]+", team_domain):
+        add = f"<https://{team_domain}.slack.com/customize/emoji|Add it to Slack>"
+    else:
+        add = "Add it under *Customize workspace → Emoji*"
+    name = emoji["name"]
+    text = (f"Emoji ready: `:{name}:`\n"
+            f"1. <{emoji['url']}|Download {name}.png>\n"
+            f"2. {add} and name it `{name}`")
+    resp = requests.post(response_url, json={
+        "response_type": "ephemeral", "replace_original": False, "text": text,
+        "blocks": [{
+            "type": "section", "text": {"type": "mrkdwn", "text": text},
+            "accessory": {"type": "image", "image_url": emoji["url"], "alt_text": name},
+        }],
     }, timeout=30)
     resp.raise_for_status()
 

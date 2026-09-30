@@ -352,6 +352,28 @@ present. Temporary source videos for edit/extend workflows use the
 `source-videos/` prefix and are intentionally excluded from the gallery
 manifest.
 
+## Custom Emoji
+
+Use a generated photo's **… → Make emoji** shortcut to turn it into a custom
+emoji. The bot center-crops the photo to a 128×128 PNG and privately replies
+with a preview, a download link, and a link to the workspace's Customize Emoji
+page. The name it suggests comes from the prompt; the download uses the same
+file name. Like Hall of Fame, it accepts image posts and shared gallery links;
+videos and messages with several items get a private notice instead.
+
+Slack's only emoji upload API (`admin.emoji.add`) requires an Enterprise plan,
+so adding the emoji is a manual upload. Emoji PNGs are saved at
+`emoji/<SHA-256 of the full decoded dalle/... key>.png`, outside the gallery
+listing, and are overwritten if the shortcut is used again.
+
+Configure the Slack shortcut once under **Interactivity & Shortcuts → Create
+New Shortcut → On messages**:
+
+- Name: `Make emoji`
+- Description: `Turn a generated photo into a custom emoji`
+- Callback ID: `make_emoji`
+- No new scopes are needed.
+
 ## Architecture
 
 Two-Lambda architecture:
