@@ -80,6 +80,12 @@ jobs:
           PY
           unzip -q ai_slop_bot/ai_slop_bot.zip -d /tmp/ai-slop-package
           unzip -q ai_slop_bot/ffmpeg_layer.zip -d /tmp/ai-slop-ffmpeg
+          docker run --rm --network none --memory 512m --entrypoint python \
+            --volume /tmp/ai-slop-package:/var/task:ro \
+            --volume /tmp/ai-slop-ffmpeg:/opt:ro \
+            --env PYTHONPATH=/var/task:/opt/python \
+            public.ecr.aws/lambda/python:3.12 \
+            -c 'import ai_slop_bot; import backends.responses_text; print("Packaged Lambda handler imported successfully.")'
           docker run --rm --memory 512m --entrypoint python \
             --volume /tmp/ai-slop-package:/var/task:ro \
             --volume /tmp/ai-slop-ffmpeg:/opt:ro \
