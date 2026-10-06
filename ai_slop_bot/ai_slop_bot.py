@@ -20,6 +20,7 @@ import prompts
 import providers
 import slack
 import usage
+import web_search
 
 
 CANONICAL_SLASH_COMMAND = "/slop-bot"
@@ -85,6 +86,9 @@ def ai_slop_bot(event, _):
                 video_source_url=None,
             )
         bufo_error = _validate_bufo_mode(parsed)
+        if parsed.search_error:
+            slack.post_ephemeral(response_url, parsed.search_error)
+            return
         if bufo_error:
             slack.post_ephemeral(response_url, bufo_error)
             return
@@ -189,6 +193,7 @@ def ai_slop_bot(event, _):
             parsed = dataclasses.replace(
                 parsed, prompt_text=prompts.get_payment_prompt(parsed.mode),
                 emoji_mode=False, bufo_mode=False, potato_mode=False,
+                search_mode="off",
             )
 
         if parsed.mode == "video":
@@ -311,13 +316,15 @@ def ai_slop_bot(event, _):
             backend=backend,
             model=_model_for_request("text", backend),
             cost_estimate=0.0,
-            call=lambda: provider.generate(system, parsed.prompt_text),
+            call=lambda: provider.generate(system, parsed.prompt_text, search_mode=parsed.search_mode),
         )
         usage.record_usage(user, result)
         print(f"GENERATE TEXT COMPLETE: {result.content}")
         conversation_id = None if overridden else _start_conversation(parsed, user, channel_id, result)
-        slack.post_text_response(response_url, user, parsed.display_text, result.content,
-                                 actions=_continue_button(conversation_id))
+        slack.post_text_response(response_url, user, parsed.display_text,
+                                 web_search.render(result, for_slack=True),
+                                 actions=_continue_button(conversation_id),
+                                 linked_sources=bool(result.citations))
 
     except Exception as exc:
         print("COMMAND ERROR: " + str(exc))
@@ -344,12 +351,13 @@ def _start_conversation(parsed, user: str, channel_id: str, result) -> str | Non
             channel_id=channel_id,
             created_by=user,
             flags={
-                "backend": parsed.backend_override or "",
+                "backend": result.backend,
                 "potato": parsed.potato_mode,
                 "emoji": parsed.emoji_mode,
+                "search_mode": parsed.search_mode,
             },
             user_msg=conversations.user_message(parsed.prompt_text, user),
-            assistant_msg=conversations.assistant_message(result.content),
+            assistant_msg=conversations.assistant_message(web_search.render(result)),
         )
     except Exception as exc:  # pylint: disable=broad-except
         print(f"CONVERSATION CREATE ERROR: {exc}")
@@ -361,7 +369,7 @@ def _continue_conversation(message: dict, response_url: str):  # pylint: disable
     """Run one Continue-button turn: replay history, append the exchange, post a flat reply.
 
     The submitting user is balance-gated and billed; the first turn's backend,
-    potato, and emoji flags carry over.
+    potato, emoji, and search choices carry over.
     """
     user = message["user"]
     conversation_id = message.get("conversation_id", "")
@@ -412,13 +420,13 @@ def _continue_conversation(message: dict, response_url: str):  # pylint: disable
     print(f"GENERATE TEXT (conversation turn {item['turn_count'] + 1}): {prompt_text}")
     result = _provider_call_or_record_failure(
         user=user, mode="text", backend=backend, model=model, cost_estimate=0.0,
-        call=lambda: provider.chat(system, history),
+        call=lambda: provider.chat(system, history, search_mode=flags.get("search_mode", "off")),
     )
     usage.record_usage(user, result)
     print(f"GENERATE TEXT COMPLETE: {result.content}")
 
     user_msg = conversations.user_message(prompt_text, user)
-    assistant_msg = conversations.assistant_message(result.content)
+    assistant_msg = conversations.assistant_message(web_search.render(result))
     if not conversations.append_turn(conversation_id, user_msg, assistant_msg, item["turn_count"]):
         slack.post_ephemeral(
             response_url,
@@ -427,12 +435,13 @@ def _continue_conversation(message: dict, response_url: str):  # pylint: disable
         )
         return
 
-    reply = result.content
+    reply = web_search.render(result, for_slack=True)
     actions = slack.conversation_action(conversation_id)
     if conversations.is_full(item["turn_count"] + 1, item["messages"] + [user_msg, assistant_msg]):
         reply += f"\n\n_(This conversation is full. {start_hint})_"
         actions = None
-    slack.post_text_response(response_url, user, display_text, reply, actions=actions)
+    slack.post_text_response(response_url, user, display_text, reply, actions=actions,
+                             linked_sources=bool(result.citations))
 
 
 def _unfurl_gallery_links(message):
@@ -507,7 +516,7 @@ def _provider_call_or_record_failure(*, user: str, mode: str, backend: str,
 def _backend_for_mode(mode: str, override: str | None) -> str:
     """Resolve the provider name that will be used for a request mode."""
     if mode == "text":
-        return override or os.environ.get("TEXT_BACKEND", "gemini")
+        return override or os.environ.get("TEXT_BACKEND", "openai")
     if mode == "image":
         return override or os.environ.get("IMAGE_BACKEND", "grok")
     if mode == "video":
@@ -669,6 +678,8 @@ def main():
         return
 
     bufo_error = _validate_bufo_mode(parsed)
+    if parsed.search_error:
+        raise SystemExit(parsed.search_error)
     if bufo_error:
         raise SystemExit(bufo_error)
 
@@ -723,8 +734,8 @@ def main():
     else:
         system = prompts.get_system_message("cli", parsed.potato_mode)
         provider = providers.get_text_provider(parsed.backend_override)
-        result = provider.generate(system, parsed.prompt_text)
-        print(result.content)
+        result = provider.generate(system, parsed.prompt_text, search_mode=parsed.search_mode)
+        print(web_search.render(result))
 
 
 if __name__ == "__main__":

@@ -7,13 +7,16 @@ Unified Slack AI command (`/slop-bot`) with pluggable provider backends.
 The user-facing Slack slash command is `/slop-bot`. The Slack app still posts
 slash-command payloads to the `/ai-slop` HTTP route during deployment.
 
-- `/slop-bot <prompt>` — text response (default: Gemini)
+- `/slop-bot <prompt>` — text response with automatic web search when useful (default: OpenAI)
+- `/slop-bot -s <prompt>` — require a web lookup with source links
+- `/slop-bot -t <prompt>` — answer without web search
 - `/slop-bot -i <prompt>` — image generation (default: Grok)
 - `/slop-bot -v [seconds] <prompt>` — video generation (default: Grok)
 - `/slop-bot -e <prompt>` — emoji-only text response
 - `/slop-bot -bufo <prompt>` or `/slop-bot --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com
 - `/slop-bot -p <prompt>` — potato mode
-- `/slop-bot -b gemini <prompt>` — text with a specific backend
+- `/slop-bot -b grok <prompt>` — text with a specific backend
+- `/slop-bot -b gemini -t <prompt>` — Gemini text without web search
 - `/slop-bot -i -b openai <prompt>` — image with a specific backend
 - `/slop-bot -v -b grok <prompt>` — video with a specific backend
 - `/slop-bot -v -b gemini <prompt>` — video with Veo (native audio/dialogue)
@@ -29,6 +32,8 @@ Flags can appear in any order unless a flag consumes the next value.
 - `-bufo`, `--bufo` — sentiment-analyzed bufo-emoji-only rewriting sourced from bufopedia.com.
 - `-p` — potato mode.
 - `-b <backend>` — override the backend for the selected mode.
+- `-s`, `--search` — require a successful web lookup before answering.
+- `-t`, `--no-search` — disable web search. Cannot be combined with `-s`.
 - `-u`, `--usage` — show your usage stats and credit balance.
 - `-g`, `--gallery` — show the AI Slop Gallery link.
 - `-pay <amount>`, `--pay <amount>` — keep the existing immediate credit and Venmo payment link until live PayPal is explicitly enabled.
@@ -59,7 +64,7 @@ button, so an exchange can run for many turns without threads or mentions.
 
 - Anyone in the channel can continue a conversation, and each person pays for
   their own turns under the usual balance rules.
-- The first prompt's `-b`, `-p`, and `-e` choices apply to every later turn;
+- The first prompt's `-b`, `-p`, `-e`, and search choices apply to every later turn;
   `[hidden]` and `]shown[` bracket syntax still works in follow-ups.
 - `-bufo`, image, and video replies are single-shot and have no button. A
   payment-reminder reply is never continuable.
@@ -67,6 +72,57 @@ button, so an exchange can run for many turns without threads or mentions.
   expire 30 days after their last turn. The button stays valid for 30 minutes
   after it is clicked, so submit the form promptly.
 - Requires `CONVERSATIONS_TABLE_NAME`; without it, replies have no button.
+
+### Web search
+
+Ordinary text replies offer the model hosted web search. It can answer stable
+knowledge, creative writing, and casual conversation directly, while looking up
+current facts and recommendations. `-s` requires a successful lookup; if it fails
+or the provider skips it, the bot reports an error rather than presenting an
+unsearched answer. `-t` makes no search calls. Emoji-only, Bufo, and payment-reminder
+replies also run without search; `-s` is rejected with emoji/Bufo modes. The search
+flags are text-only and are rejected with image/video generation.
+
+Claude, OpenAI, and Grok use their own hosted search tools and existing API keys.
+OpenAI is the default text backend. Gemini currently requires `-b gemini -t`:
+Google's native grounding requires its Search Suggestions widget, which Slack
+cannot render. See [Google's display requirements](https://ai.google.dev/gemini-api/docs/generate-content/google-search)
+and [grounding terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search).
+Deployments explicitly setting `TEXT_BACKEND=gemini` should change it to
+`openai` to enable automatic search for ordinary commands.
+
+Provider citation metadata becomes clickable inline links and a Sources list in
+Slack. Costs are not shown in answers. The stored conversation keeps the answer
+and source URLs; each new turn can search afresh. New conversations pin the
+resolved backend and search mode. Existing conversations without a search mode
+keep search disabled and use their saved backend or the configured default.
+
+Search usage is included in the existing usage total and balance. Records store
+`search_calls` and `search_cost_estimate` in addition to the total; these fields
+are a breakdown and must not be added to the total again. Claude and OpenAI search
+calls are estimated at $0.01 each and Grok calls at $0.005 each, plus model tokens.
+OpenAI page opens/finds do not incur another search fee. xAI's reported actual
+cost takes precedence and already includes all tools and tokens. OpenAI/xAI
+fallback token estimates use uncached rates; they are not invoice totals. Known
+usage is retained if a search is interrupted or returns an incomplete answer;
+transport failures with no usage metadata cannot establish a billed total.
+
+Claude is capped at three searches across up to three paused-request continuations.
+OpenAI is capped at three built-in tool calls, including page opens/finds.
+Grok is capped at three agent turns; each turn can issue multiple calls, so this
+is not a hard three-search or dollar limit. Search responses have a 4,096 output
+token limit (Grok's excludes internal reasoning), 90-second request timeouts,
+and no automatic HTTP retries. An administrator may disable Claude web search
+in the provider console; such failures are surfaced to the user.
+
+API references and rates checked October 6, 2026:
+[Claude search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool),
+[OpenAI search](https://developers.openai.com/api/docs/guides/tools-web-search),
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing),
+[Grok search](https://docs.x.ai/developers/tools/web-search),
+[Grok limits](https://docs.x.ai/developers/tools/tool-usage-details),
+[Grok pricing](https://docs.x.ai/developers/pricing), and
+[Grok actual costs](https://docs.x.ai/developers/cost-tracking).
 
 ### Reference images and videos
 
@@ -385,8 +441,8 @@ Two-Lambda architecture:
 | Type  | Backend    | Default model                     | Default |
 |-------|------------|-----------------------------------|---------|
 | Text  | anthropic  | `claude-sonnet-5`                 |         |
-| Text  | gemini     | `gemini-3.8-flash`                | Yes     |
-| Text  | openai     | `gpt-5.6-sol`                    |         |
+| Text  | gemini     | `gemini-3.8-flash`                |         |
+| Text  | openai     | `gpt-5.6-sol`                    | Yes     |
 | Text  | grok       | `grok-4.3` (reasoning off)       |         |
 | Image | gemini     | `gemini-3.1-flash-image`          |         |
 | Image | openai     | `gpt-image-2.5-flare`             |         |
@@ -432,7 +488,7 @@ is promotional through at least November 21, 2026; recheck rates on later review
 ### Bot Lambda
 | Variable | Default | Purpose |
 |---|---|---|
-| `TEXT_BACKEND` | `gemini` | Default text provider |
+| `TEXT_BACKEND` | `openai` | Default text provider |
 | `IMAGE_BACKEND` | `grok` | Default image provider |
 | `VIDEO_BACKEND` | `grok` | Default video provider |
 | `TEXT_MODEL` | backend default | Text model override for the selected text backend |

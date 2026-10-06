@@ -10,6 +10,14 @@ import boto3
 import model_config
 
 
+class Citation(typing.NamedTuple):
+    """A provider-supplied source and its location in the unmodified answer."""
+    url: str
+    title: str
+    start_index: int = -1
+    end_index: int = -1
+
+
 class GenerationResult(typing.NamedTuple):
     """Result from a text or image generation backend."""
     content: str | bytes
@@ -20,6 +28,9 @@ class GenerationResult(typing.NamedTuple):
     cost_estimate: float
     cost_actual: float | None = None
     cost_in_usd_ticks: int | None = None
+    search_calls: int = 0
+    search_cost_estimate: float = 0.0
+    citations: tuple[Citation, ...] = ()
 
 
 COST_PER_MILLION_TOKENS = {
@@ -94,6 +105,10 @@ class ProviderGenerationError(RuntimeError):
         cost_estimate: float = 0.0,
         cost_actual: float | None = None,
         cost_in_usd_ticks: int | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        search_calls: int = 0,
+        search_cost_estimate: float = 0.0,
     ):
         super().__init__(message)
         self.backend = backend
@@ -103,6 +118,10 @@ class ProviderGenerationError(RuntimeError):
         self.cost_estimate = cost_estimate
         self.cost_actual = cost_actual
         self.cost_in_usd_ticks = cost_in_usd_ticks
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.search_calls = search_calls
+        self.search_cost_estimate = search_cost_estimate
 
 
 def estimate_text_cost(backend: str, input_tokens: int, output_tokens: int,
@@ -359,6 +378,8 @@ def record_usage(user: str, result: GenerationResult):
             "cost_estimate": Decimal(str(round(result.cost_estimate, 6))),
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
+            "search_calls": result.search_calls,
+            "search_cost_estimate": Decimal(str(round(result.search_cost_estimate, 6))),
         }
         if result.cost_actual is not None:
             item["cost_actual"] = Decimal(str(round(result.cost_actual, 10)))
@@ -407,8 +428,10 @@ def record_failed_request(
             "backend": backend,
             "model": model,
             "cost_estimate": Decimal(str(round(float(cost_estimate or 0), 6))),
-            "input_tokens": 0,
-            "output_tokens": 0,
+            "input_tokens": getattr(exc, "input_tokens", 0),
+            "output_tokens": getattr(exc, "output_tokens", 0),
+            "search_calls": getattr(exc, "search_calls", 0),
+            "search_cost_estimate": Decimal(str(round(getattr(exc, "search_cost_estimate", 0.0), 6))),
             "error_type": error_type,
             "error_message": str(error_message or "")[:ERROR_MESSAGE_MAX],
         }

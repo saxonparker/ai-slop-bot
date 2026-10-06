@@ -51,7 +51,7 @@ def test_create_stores_first_exchange_flags_and_ttl(table):
     assert item["channel_id"] == "C1"
     assert item["created_by"] == "alice"
     assert item["turn_count"] == 1
-    assert item["flags"] == {"backend": "grok", "potato": True, "emoji": False}
+    assert item["flags"] == {"backend": "grok", "potato": True, "emoji": False, "search_mode": "off"}
     assert item["messages"] == [
         {"role": "user", "content": "hi", "user": "alice"},
         {"role": "assistant", "content": "hello"},

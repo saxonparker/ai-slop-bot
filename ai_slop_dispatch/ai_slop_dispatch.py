@@ -41,7 +41,10 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} -bufo <prompt>` or `{CANONICAL_SLASH_COMMAND} --bufo <prompt>` — sentiment-analyzed bufo-emoji-only rewrite using names from bufopedia.com
   `{CANONICAL_SLASH_COMMAND} -p <prompt>` — potato mode (sarcastic & rude)
   `{CANONICAL_SLASH_COMMAND} -b <backend> <prompt>` — use a specific backend
-  Every text reply has a *Continue* button — click it to add a follow-up turn. Anyone can continue and pays for their own turns; `-p`, `-e`, and `-b` from the first prompt carry over (`-bufo` is single-shot).
+  `{CANONICAL_SLASH_COMMAND} -s <prompt>` — require a web lookup with source links
+  `{CANONICAL_SLASH_COMMAND} -t <prompt>` — answer without web search
+  Text replies use OpenAI by default and search automatically when useful. Search is also supported by Grok and Claude; use `-b gemini -t` for Gemini.
+  Every text reply has a *Continue* button — click it to add a follow-up turn. Anyone can continue and pays for their own turns; `-p`, `-e`, `-b`, and the search mode from the first prompt carry over (`-bufo` is single-shot).
   `{CANONICAL_SLASH_COMMAND} -u` or `{CANONICAL_SLASH_COMMAND} --usage` — show your usage stats and credit balance
   `{CANONICAL_SLASH_COMMAND} -g` or `{CANONICAL_SLASH_COMMAND} --gallery` — show the AI Slop Gallery link
   `{CANONICAL_SLASH_COMMAND} -pay <amount>` or `{CANONICAL_SLASH_COMMAND} --pay <amount>` — get credits and payment instructions
@@ -94,7 +97,7 @@ HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
   `{CANONICAL_SLASH_COMMAND} what's the capital of France? ]asking for a friend[` — text in reverse `]brackets[` is shown in the channel but not sent to the AI
 
 *Backends:*
-  Text: `gemini` (default), `anthropic`, `openai`, `grok`
+  Text: `openai` (default), `grok`, `anthropic`, `gemini` (use `-t`)
   Image: `grok` (default), `gemini`, `openai`
   Video: `grok` (default), `gemini` (Veo 3.1)"""
 

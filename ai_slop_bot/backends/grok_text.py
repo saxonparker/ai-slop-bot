@@ -5,6 +5,7 @@ import os
 from openai import OpenAI
 
 import model_config
+from backends.responses_text import search_response
 from usage import (
     GenerationResult,
     ProviderGenerationError,
@@ -18,7 +19,7 @@ from usage import (
 class GrokProvider:
     """Text generation using xAI Grok."""
 
-    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict], *, search_mode: str = "off") -> GenerationResult:
         """Generate the next reply for a user/assistant message history."""
         client = OpenAI(
             api_key=os.environ["XAI_API_KEY"],
@@ -30,7 +31,11 @@ class GrokProvider:
         # Preserve the old non-reasoning workload when replacing its retired ID.
         options = {"reasoning_effort": "none"} if model == "grok-4.3" else {}
         try:
+            if search_mode != "off":
+                return search_response(client, "grok", model, system, messages, search_mode)
             response = client.chat.completions.create(model=model, messages=api_messages, **options)
+        except ProviderGenerationError:
+            raise
         except Exception as exc:
             cost_actual, cost_ticks = xai_cost_from_error(exc)
             error_type, user_message = classify_xai_error(exc)
@@ -59,6 +64,6 @@ class GrokProvider:
             cost_in_usd_ticks=cost_ticks,
         )
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def generate(self, system: str, prompt: str, *, search_mode: str = "off") -> GenerationResult:
         """Single-shot generation: a one-message chat."""
-        return self.chat(system, [{"role": "user", "content": prompt}])
+        return self.chat(system, [{"role": "user", "content": prompt}], search_mode=search_mode)

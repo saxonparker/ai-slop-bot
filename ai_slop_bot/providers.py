@@ -10,8 +10,8 @@ from usage import GenerationResult
 
 class TextProvider(Protocol):
     """Interface for text generation backends."""
-    def generate(self, system: str, prompt: str) -> GenerationResult: ...
-    def chat(self, system: str, messages: list[dict]) -> GenerationResult: ...
+    def generate(self, system: str, prompt: str, *, search_mode: str = "off") -> GenerationResult: ...
+    def chat(self, system: str, messages: list[dict], *, search_mode: str = "off") -> GenerationResult: ...
 
 
 class ImageProvider(Protocol):
@@ -65,8 +65,8 @@ def _load_provider(registry: dict, name: str):
 
 
 def get_text_provider(override: str | None = None) -> TextProvider:
-    """Get a text provider instance, using override, env var, or default (gemini)."""
-    backend = override or os.environ.get("TEXT_BACKEND", "gemini")
+    """Get a text provider instance, using override, env var, or default (openai)."""
+    backend = override or os.environ.get("TEXT_BACKEND", "openai")
     return _load_provider(TEXT_PROVIDERS, backend)
 
 

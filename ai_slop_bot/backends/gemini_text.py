@@ -11,11 +11,13 @@ from usage import GenerationResult, estimate_text_cost
 class GeminiProvider:
     """Text generation using Google Gemini."""
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def generate(self, system: str, prompt: str, *, search_mode: str = "off") -> GenerationResult:
+        self._check_search(search_mode)
         return self._generate(system, prompt)
 
-    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict], *, search_mode: str = "off") -> GenerationResult:
         """Generate the next reply for a user/assistant message history."""
+        self._check_search(search_mode)
         contents = [
             {
                 "role": "user" if message["role"] == "user" else "model",
@@ -24,6 +26,14 @@ class GeminiProvider:
             for message in messages
         ]
         return self._generate(system, contents)
+
+    @staticmethod
+    def _check_search(mode):
+        # Google requires its Search Suggestions widget alongside grounded output.
+        # Slack cannot render that widget; do not silently drop the requirement or
+        # pretend an ungrounded Gemini reply was searched.
+        if mode != "off":
+            raise ValueError("Gemini web search is not available in Slack. Use -b openai for search, or -b gemini -t for no web search.")
 
     def _generate(self, system: str, contents) -> GenerationResult:
         client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])

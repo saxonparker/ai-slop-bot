@@ -30,6 +30,8 @@ _LONG_FLAGS = {
     "--resolution",
     "--credit",
     "--bufo",
+    "--search",
+    "--no-search",
 }
 EMOJI_DIRECTIVE = " [Respond only with emojis. No text.]"
 _RESOLUTION_HELP = (
@@ -61,6 +63,8 @@ class ParsedCommand:
     potato_mode: bool = False
     bufo_mode: bool = False
     backend_override: str | None = None
+    search_mode: str = "auto"
+    search_error: str | None = None
     usage: bool = False
     report: bool = False
     gallery: bool = False
@@ -98,6 +102,7 @@ def parse_command(input_str: str) -> ParsedCommand:
     report_mode = False
     gallery_mode = False
     backend_override = None
+    search_modes = set()
     pay_amount = None
     pay_test_amount = None
     pay_flags = set()
@@ -128,6 +133,10 @@ def parse_command(input_str: str) -> ParsedCommand:
             emoji_mode = True
         elif lower == "-p":
             potato_mode = True
+        elif lower in ("-s", "--search"):
+            search_modes.add("required")
+        elif lower in ("-t", "--no-search"):
+            search_modes.add("off")
         elif lower in ("-bufo", "--bufo"):
             bufo_mode = True
         elif lower in ("-u", "--usage"):
@@ -240,6 +249,16 @@ def parse_command(input_str: str) -> ParsedCommand:
     mode = "video" if video_mode else "image" if image_mode else "text"
     if len(pay_flags) > 1:
         pay_error = "Use -pay for real credits or -pay-test for sandbox testing in separate commands."
+    search_mode = next(iter(search_modes)) if len(search_modes) == 1 else "auto"
+    search_error = None
+    if len(search_modes) > 1:
+        search_error = "Use -s to require web search or -t for no web search, not both."
+    elif search_modes and mode != "text":
+        search_error = "-s and -t apply to text replies; remove them when using -i or -v."
+    elif search_mode == "required" and (emoji_mode or bufo_mode):
+        search_error = "-s needs a text reply with source links; remove -e or -bufo."
+    elif emoji_mode or bufo_mode:
+        search_mode = "off"
     return ParsedCommand(
         mode=mode,
         display_text=display_text,
@@ -248,6 +267,8 @@ def parse_command(input_str: str) -> ParsedCommand:
         potato_mode=potato_mode,
         bufo_mode=bufo_mode,
         backend_override=backend_override,
+        search_mode=search_mode,
+        search_error=search_error,
         usage=usage_mode,
         report=report_mode,
         gallery=gallery_mode,

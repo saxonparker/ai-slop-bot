@@ -9,7 +9,8 @@ import hall_of_fame
 
 
 def post_text_response(response_url: str, user: str, display: str, response: str,
-                       render_in_block: bool = False, actions: dict | None = None):
+                       render_in_block: bool = False, actions: dict | None = None,
+                       linked_sources: bool = False):
     """Post a text response back to Slack.
 
     When render_in_block is set, the response goes in an mrkdwn section block
@@ -40,6 +41,8 @@ def post_text_response(response_url: str, user: str, display: str, response: str
             blocks.append(actions)
     else:
         payload["attachments"] = [{"text": response}]
+        if linked_sources:
+            payload["attachments"][0]["mrkdwn_in"] = ["text"]
         if actions:
             # Top-level blocks render above attachments; a block-only
             # attachment keeps the button under the response text.

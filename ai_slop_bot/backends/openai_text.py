@@ -6,6 +6,7 @@ import re
 from openai import OpenAI
 
 import model_config
+from backends.responses_text import search_response
 from usage import GenerationResult, estimate_text_cost
 
 
@@ -22,13 +23,15 @@ def clean_response(text: str) -> str:
 class OpenAIProvider:
     """Text generation using OpenAI ChatGPT."""
 
-    def chat(self, system: str, messages: list[dict]) -> GenerationResult:
+    def chat(self, system: str, messages: list[dict], *, search_mode: str = "off") -> GenerationResult:
         """Generate the next reply for a user/assistant message history."""
         client = OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             organization=os.environ["OPENAI_ORGANIZATION"],
         )
         model = model_config.get_model("text", "openai")
+        if search_mode != "off":
+            return search_response(client, "openai", model, system, messages, search_mode)
         api_messages = [{"role": "system", "content": system}] if system else []
         api_messages.extend(messages)
         response = client.chat.completions.create(model=model, messages=api_messages)
@@ -45,6 +48,6 @@ class OpenAIProvider:
             cost_estimate=cost,
         )
 
-    def generate(self, system: str, prompt: str) -> GenerationResult:
+    def generate(self, system: str, prompt: str, *, search_mode: str = "off") -> GenerationResult:
         """Single-shot generation: a one-message chat."""
-        return self.chat(system, [{"role": "user", "content": prompt}])
+        return self.chat(system, [{"role": "user", "content": prompt}], search_mode=search_mode)

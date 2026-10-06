@@ -63,6 +63,7 @@ def create(*, conversation_id: str, channel_id: str, created_by: str, flags: dic
                 "backend": flags.get("backend") or "",
                 "potato": bool(flags.get("potato")),
                 "emoji": bool(flags.get("emoji")),
+                "search_mode": flags.get("search_mode", "off"),
             },
             "turn_count": 1,
             "messages": [user_msg, assistant_msg],

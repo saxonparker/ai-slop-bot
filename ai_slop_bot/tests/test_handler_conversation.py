@@ -65,7 +65,7 @@ def test_first_text_reply_stores_exchange_and_posts_continue_button(bot, conv):
     assert kwargs["conversation_id"] == "conv1"
     assert kwargs["channel_id"] == "C"
     assert kwargs["created_by"] == "bob"
-    assert kwargs["flags"] == {"backend": "grok", "potato": True, "emoji": False}
+    assert kwargs["flags"] == {"backend": "grok", "potato": True, "emoji": False, "search_mode": "auto"}
     assert kwargs["user_msg"] == {"role": "user", "content": "tell a joke about dogs", "user": "bob"}
     assert kwargs["assistant_msg"] == {"role": "assistant", "content": "generated"}
     bot.slack.conversation_action.assert_called_once_with("conv1")

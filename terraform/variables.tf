@@ -45,7 +45,7 @@ variable "slack_bot_token" {
 
 variable "text_backend" {
   type    = string
-  default = "gemini"
+  default = "openai"
 }
 
 variable "image_backend" {
