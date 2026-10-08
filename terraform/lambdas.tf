@@ -97,6 +97,9 @@ resource "aws_lambda_function" "dispatch" {
   environment {
     variables = {
       AI_SLOP_SNS_TOPIC        = aws_sns_topic.ai_slop.arn
+      TEXT_BACKEND            = var.text_backend
+      IMAGE_BACKEND           = var.image_backend
+      VIDEO_BACKEND           = var.video_backend
       HALL_OF_FAME_TABLE_NAME  = aws_dynamodb_table.hall_of_fame.name
       SLACK_BOT_TOKEN          = var.slack_bot_token
       SLACK_SIGNING_SECRET     = var.slack_signing_secret

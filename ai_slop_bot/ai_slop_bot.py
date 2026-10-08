@@ -68,7 +68,8 @@ def ai_slop_bot(event, _):
         channel_id = message.get("channel_id", "")
         channel_name = message.get("channel_name", "")
 
-        parsed = parsing.parse_command(input_str)
+        parsed = (parsing.parse_generation_form(message["generation"])
+                  if source == "generation_modal" else parsing.parse_command(input_str))
         if parsed.pay_error:
             slack.post_ephemeral(response_url, parsed.pay_error)
             return

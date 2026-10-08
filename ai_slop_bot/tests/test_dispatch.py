@@ -101,6 +101,10 @@ def _events_request(payload: dict):
     }
 
 
+def _form_inputs(view):
+    return {block["element"]["action_id"]: block for block in view["blocks"] if block["type"] == "input"}
+
+
 def test_url_verification_echoes_challenge():
     response = ai_slop_dispatch.dispatch(
         _events_request({"type": "url_verification", "challenge": "abc123"}),
@@ -146,21 +150,21 @@ def test_upload_slash_command_opens_modal(mock_boto, mock_urlopen):
     payload = json.loads(request.data.decode("utf-8"))
     assert payload["trigger_id"] == "trig"
     view = payload["view"]
-    assert view["callback_id"] == "ai_slop_upload"
+    assert view["callback_id"] == "ai_slop_generate"
     metadata = json.loads(view["private_metadata"])
     assert metadata["mode"] == "video"
-    blocks = {block["block_id"]: block for block in view["blocks"]}
-    assert "video_op_block" in blocks
-    video_op = blocks["video_op_block"]["element"]
+    blocks = _form_inputs(view)
+    assert "video_op" in blocks
+    video_op = blocks["video_op"]["element"]
     assert [option["value"] for option in video_op["options"]] == [
         "generate", "edit", "extend",
     ]
     assert video_op["initial_option"]["value"] == "generate"
-    assert blocks["video_op_block"]["dispatch_action"] is True
-    assert "video_url_block" not in blocks
-    assert "source_video_block" not in blocks
-    assert "reference_role_block" in blocks
-    assert blocks["files_block"]["optional"] is True
+    assert blocks["video_op"]["dispatch_action"] is True
+    assert "video_url" not in blocks
+    assert "upload_videos" not in blocks
+    assert "role" in blocks
+    assert blocks["upload_images"]["optional"] is True
 
 
 @patch.dict("os.environ", {
@@ -182,13 +186,13 @@ def test_video_upload_slash_command_generate_modal_hides_video_source_blocks(moc
     mock_boto.return_value.publish.assert_not_called()
     request = mock_urlopen.call_args.args[0]
     payload = json.loads(request.data.decode("utf-8"))
-    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
-    assert "video_op_block" in blocks
-    assert "duration_block" in blocks
-    assert "reference_role_block" in blocks
-    assert "files_block" in blocks
-    assert "video_url_block" not in blocks
-    assert "source_video_block" not in blocks
+    blocks = _form_inputs(payload["view"])
+    assert "video_op" in blocks
+    assert "duration" in blocks
+    assert "role" in blocks
+    assert "upload_images" in blocks
+    assert "video_url" not in blocks
+    assert "upload_videos" not in blocks
 
 
 @patch.dict("os.environ", {
@@ -212,19 +216,19 @@ def test_video_edit_upload_slash_command_prefills_modal(mock_boto, mock_urlopen)
     assert response["statusCode"] == "200"
     request = mock_urlopen.call_args.args[0]
     payload = json.loads(request.data.decode("utf-8"))
-    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
-    assert blocks["video_op_block"]["element"]["initial_option"]["value"] == "extend"
-    assert "source_video_block" in blocks
-    assert blocks["source_video_block"]["optional"] is True
-    assert blocks["source_video_block"]["element"]["filetypes"] == ["mp4", "mov", "webm"]
-    assert blocks["source_video_block"]["element"]["max_files"] == 1
+    blocks = _form_inputs(payload["view"])
+    assert blocks["video_op"]["element"]["initial_option"]["value"] == "extend"
+    assert "upload_videos" in blocks
+    assert blocks["upload_videos"]["optional"] is True
+    assert blocks["upload_videos"]["element"]["filetypes"] == ["mp4", "mov", "webm"]
+    assert blocks["upload_videos"]["element"]["max_files"] == 1
     assert (
-        blocks["video_url_block"]["element"]["initial_value"]
+        blocks["video_url"]["element"]["initial_value"]
         == "https://example.com/source.mp4"
     )
-    assert "reference_role_block" not in blocks
-    assert "files_block" not in blocks
-    assert blocks["prompt_block"]["element"]["initial_value"] == "keep going"
+    assert "role" not in blocks
+    assert "upload_images" not in blocks
+    assert blocks["prompt"]["element"]["initial_value"] == "keep going"
 
 
 @patch.dict("os.environ", {
@@ -611,9 +615,9 @@ def test_video_generate_modal_offers_voices(mock_boto, mock_urlopen):
     )
 
     payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
-    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
-    assert "voices_block" in blocks
-    element = blocks["voices_block"]["element"]
+    blocks = _form_inputs(payload["view"])
+    assert "voices" in blocks
+    element = blocks["voices"]["element"]
     assert element["type"] == "multi_static_select"
     assert element["max_selected_items"] == 3
     values = [option["value"] for option in element["options"]]
@@ -643,12 +647,12 @@ def test_video_upload_modal_prefills_voices_from_command(mock_boto, mock_urlopen
     )
 
     payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
-    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
-    element = blocks["voices_block"]["element"]
+    blocks = _form_inputs(payload["view"])
+    element = blocks["voices"]["element"]
     assert [option["value"] for option in element["initial_options"]] == ["leo"]
     assert element["initial_options"][0]["text"]["text"] == "Leo (M)"
     # The flag is consumed rather than leaking into the prefilled prompt.
-    assert blocks["prompt_block"]["element"]["initial_value"] == "make it move"
+    assert blocks["prompt"]["element"]["initial_value"] == "make it move"
 
 
 def _voice_submission_payload(voices, backend="grok"):
@@ -744,11 +748,9 @@ def test_upload_modal_keeps_resolution_out_of_the_prefilled_prompt(mock_boto, mo
     )
 
     payload = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
-    blocks = {block["block_id"]: block for block in payload["view"]["blocks"]}
-    assert blocks["prompt_block"]["element"]["initial_value"] == "make it move"
-    # The form has no resolution picker, so -r rides along in private_metadata.
-    metadata = json.loads(payload["view"]["private_metadata"])
-    assert metadata["resolution"] == "720"
+    blocks = _form_inputs(payload["view"])
+    assert blocks["prompt"]["element"]["initial_value"] == "make it move"
+    assert blocks["resolution"]["element"]["initial_option"]["value"] == "720p"
 
 
 def _resolution_submission_payload(resolution, backend="grok"):

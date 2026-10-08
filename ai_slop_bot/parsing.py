@@ -289,6 +289,28 @@ def parse_command(input_str: str) -> ParsedCommand:
     )
 
 
+def parse_generation_form(request: dict) -> ParsedCommand:
+    """Turn validated form options into a command without scanning prompt flags.
+
+    In particular, a prompt containing '-pay', '--credit', or '-v' remains text.
+    Modal jobs still take the same validation, balance, and provider paths.
+    """
+    prompt = request["prompt"]
+    output = request.get("output", "normal")
+    if output == "emoji":
+        prompt += EMOJI_DIRECTIVE
+    display_text, prompt_text = split_brackets(prompt)
+    return ParsedCommand(
+        mode=request["mode"], display_text=display_text, prompt_text=prompt_text,
+        backend_override=request["backend"], potato_mode=request.get("potato", False),
+        emoji_mode=output == "emoji", bufo_mode=output == "bufo",
+        search_mode=request.get("search", "off"),
+        video_duration=request.get("duration"), video_resolution=request.get("resolution"),
+        video_op=request.get("video_op"), video_source_url=request.get("video_url"),
+        voices=request.get("voices", []),
+    )
+
+
 def split_brackets(text: str) -> tuple[str, str]:
     """Split prompt text into (display_text, prompt_text) using the bracket syntax.
 

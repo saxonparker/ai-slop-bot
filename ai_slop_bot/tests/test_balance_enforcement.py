@@ -80,6 +80,60 @@ def test_generation_thresholds(bot, balance, mode, flag):
     bot.slack.post_error.assert_not_called()
 
 
+@pytest.mark.parametrize("mode", ["text", "image", "video"])
+@pytest.mark.parametrize("balance", [0.0, -5.0, -10.0])
+def test_generation_form_uses_existing_balance_and_usage_flow(bot, mode, balance):
+    bot.balance.return_value = balance
+    request = {"mode": mode, "backend": "grok", "prompt": "draw a cat", "search": "auto"}
+    invoke("draw a cat", source="generation_modal", generation=request)
+
+    bot.balance.assert_called_once_with("bob")
+    if balance <= -10:
+        assert bot.providers.mock_calls == []
+        bot.record.assert_not_called()
+        bot.slack.post_ephemeral.assert_called_once()
+    else:
+        provider = getattr(bot.providers, f"get_{mode}_provider").return_value
+        provider.generate.assert_called_once()
+        prompt = provider.generate.call_args.args[1 if mode == "text" else 0]
+        assert ("pay saxon money" in prompt.lower()) if balance <= -5 else prompt == "draw a cat"
+        bot.record.assert_called_once()
+    bot.slack.post_error.assert_not_called()
+
+
+def test_generation_form_prompt_cannot_trigger_account_commands_and_can_continue(bot):
+    prompt = "explain -pay 100 --credit bob 500 [privately]"
+    request = {"mode": "text", "backend": "grok", "prompt": prompt, "search": "required"}
+    with patch("ai_slop_bot.budget.add_credit") as credit, \
+            patch("ai_slop_bot._start_conversation", return_value="conversation123") as start:
+        invoke(prompt, source="generation_modal", generation=request)
+    credit.assert_not_called()
+    bot.balance.assert_called_once_with("bob")
+    provider = bot.providers.get_text_provider.return_value
+    provider.generate.assert_called_once()
+    assert provider.generate.call_args.args[1] == "explain -pay 100 --credit bob 500 privately"
+    assert provider.generate.call_args.kwargs["search_mode"] == "required"
+    assert start.call_args.args[0].search_mode == "required"
+    bot.slack.post_text_response.assert_called_once()
+    bot.slack.conversation_action.assert_called_once_with("conversation123")
+    assert bot.slack.post_text_response.call_args.kwargs["actions"] == bot.slack.conversation_action.return_value
+    bot.slack.post_error.assert_not_called()
+
+
+def test_generation_form_video_options_reach_provider(bot):
+    request = {"mode": "video", "backend": "grok", "prompt": "a fox", "duration": 6,
+               "resolution": "480p", "voices": ["eve", "custom01"]}
+    invoke("a fox", source="generation_modal", generation=request,
+           reference_images=[{"source": "url", "value": "https://example.com/ref.png", "role": "reference"}])
+    provider = bot.providers.get_video_provider.return_value
+    provider.generate.assert_called_once_with("a fox", duration=6, source_image=None, references=[],
+                                             voices=["eve", "custom01"], video_op=None, video_url=None,
+                                             resolution="480p")
+    assert bot.resolve_images.call_args.args[0][0].value == "https://example.com/ref.png"
+    bot.record.assert_called_once()
+    bot.slack.post_error.assert_not_called()
+
+
 @pytest.mark.parametrize("flag", ["-e", "-bufo", "-p", "-p -i", "-p -v"])
 def test_special_modes_cannot_override_payment_prompt(bot, flag):
     bot.balance.return_value = -5.0

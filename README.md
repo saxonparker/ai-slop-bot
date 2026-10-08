@@ -7,6 +7,9 @@ Unified Slack AI command (`/slop-bot`) with pluggable provider backends.
 The user-facing Slack slash command is `/slop-bot`. The Slack app still posts
 slash-command payloads to the `/ai-slop` HTTP route during deployment.
 
+- `/slop-bot` — open the Text / Image / Video generation form
+- `/slop-bot --modal [flags] [prompt]` — open the form with options and a prompt pre-filled
+- `/slop-bot --help` — show the command reference
 - `/slop-bot <prompt>` — text response with automatic web search when useful (default: OpenAI)
 - `/slop-bot -s <prompt>` — require a web lookup with source links
 - `/slop-bot -t <prompt>` — answer without web search
@@ -21,6 +24,42 @@ slash-command payloads to the `/ai-slop` HTTP route during deployment.
 - `/slop-bot -v -b grok <prompt>` — video with a specific backend
 - `/slop-bot -v -b gemini <prompt>` — video with Veo (native audio/dialogue)
 - `/slop-bot -v -r 720 <prompt>` — video at a chosen resolution (Grok only)
+
+### Generation form
+
+Run `/slop-bot` without a prompt to open a single modal with **Text**, **Image**,
+and **Video** buttons. `/slop-bot -i` and `/slop-bot -v` open the corresponding
+form; existing `--upload` and bare image `--edit` commands use the same modal.
+Direct commands with prompts still generate immediately. Use `--modal` to
+review a pre-filled request first, for example
+`/slop-bot --modal -v 6 -b grok -r 720 a corgi surfing`.
+
+| Type | Controls |
+|---|---|
+| Text | Provider, response style (text, emoji, Bufo), web search (Auto, Required, Off), potato mode |
+| Image | Provider, generate/edit, reference image uploads and URLs, potato mode |
+| Video | Provider, generate/edit/extend, duration, resolution, start frame or references, source video upload or URL, preset/custom voices, potato mode |
+
+The form shows controls supported by the selected provider and operation.
+Gemini text and emoji responses use no search; Bufo has no potato option.
+Veo offers 4/6/8-second clips and an optional start frame. Grok exposes video
+editing, extending, resolution, references, and voices. Reference-guided Grok
+videos are limited to 10 seconds. Resolution choices show their estimated rates;
+loose references and voices cap the rendered resolution at 720p.
+
+The prompt carries across types. Each type keeps its own draft settings and
+uploads while the form is open. After a view update, retained uploads appear in
+a **Keep uploaded images/videos** selector; deselect a file to exclude it.
+Uploads are optional for new generations. Editing an image requires a reference,
+and video edit/extend requires exactly one source video. Validation errors keep
+the form open. Forms expire after 25 minutes so replies can still reach the
+original conversation; drafts are not saved after closing.
+
+Prompt text in the form is literal: use the controls for options, rather than
+typing command flags. `[hidden]` and `]shown[` directives still work. Generation
+uses the normal balance checks, usage tracking, output posting, and text
+conversation buttons. This uses the existing Slack interactivity URL and scopes;
+no new Slack app configuration is required.
 
 ### Flags
 
@@ -38,7 +77,8 @@ Flags can appear in any order unless a flag consumes the next value.
 - `-g`, `--gallery` — show the AI Slop Gallery link.
 - `-pay <amount>`, `--pay <amount>` — keep the existing immediate credit and Venmo payment link until live PayPal is explicitly enabled.
 - `-pay-test <amount>`, `--pay-test <amount>` — test the new PayPal checkout in Sandbox; no real money or spendable credits.
-- `--upload` — open the Slack upload modal; combine with `-i` or `-v`.
+- `--modal` — open the generation form, optionally pre-filled with flags and a prompt.
+- `--upload` — open the generation form; combine with `-i` or `-v` to choose the type.
 - `--edit <image-url>` — edit an image from a URL; with `-i --edit` and no URL, open the upload modal for an uploaded image edit.
 - `--ref <image-url>` — add an image reference. Repeat for multiple references.
 - `--start <image-url>` — use an image URL as the start frame for a video.
@@ -519,6 +559,7 @@ is promotional through at least November 21, 2026; recheck rates on later review
 |---|---|
 | `AI_SLOP_SNS_TOPIC` | SNS topic ARN |
 | `SLACK_BOT_TOKEN` | Slack Web API token for opening and updating upload modals |
+| `TEXT_BACKEND`, `IMAGE_BACKEND`, `VIDEO_BACKEND` | Initial provider selections in the generation form; Terraform supplies the same defaults as the bot |
 
 ## Build
 

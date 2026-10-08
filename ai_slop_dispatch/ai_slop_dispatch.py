@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 
 import boto3
+import generation_modal
 import hall_of_fame
 
 
@@ -33,6 +34,9 @@ MESSAGE_SHORTCUT_SOURCES = {
 HELP_TEXT = f"""*slop-bot* — AI text, image, and video generation
 
 *Usage:*
+  `{CANONICAL_SLASH_COMMAND}` — open the Text / Image / Video generation form
+  `{CANONICAL_SLASH_COMMAND} --modal [flags] [prompt]` — open the form with your choices pre-filled
+  `{CANONICAL_SLASH_COMMAND} --help` — show this command reference
   `{CANONICAL_SLASH_COMMAND} <prompt>` — text response
   `{CANONICAL_SLASH_COMMAND} -i <prompt>` — image generation
   `{CANONICAL_SLASH_COMMAND} -v [seconds] <prompt>` — video generation
@@ -111,6 +115,7 @@ _LONG_FLAGS = {
     "--pay",
     "--pay-test",
     "--upload",
+    "--modal",
     "--edit",
     "--edit-video",
     "--extend-video",
@@ -120,20 +125,14 @@ _LONG_FLAGS = {
     "--resolution",
     "--credit",
     "--bufo",
+    "--search",
+    "--no-search",
 }
 
 # xAI's built-in voice roster, id -> gender label, offered in the upload modal.
 # The --voice flag accepts any voice id, so custom voices and any roster
 # additions work without redeploying dispatch.
-PRESET_VOICES = {
-    "altair": "M", "ara": "F", "atlas": "M", "aurora": "F",
-    "carina": "F", "castor": "M", "celeste": "F", "cosmo": "M",
-    "eve": "F", "helios": "M", "helix": "M", "iris": "F",
-    "kepler": "M", "leo": "M", "liora": "F", "lumen": "M",
-    "luna": "F", "lux": "M", "naksh": "M", "orion": "M",
-    "perseus": "M", "rex": "M", "rigel": "M", "sal": "M",
-    "sirius": "M", "ursa": "F", "zagan": "M", "zenith": "M",
-}
+PRESET_VOICES = generation_modal.PRESET_VOICES
 MAX_VOICES = 3
 # A Continue button's response_url lives 30 minutes; refuse older modal submissions.
 CONTINUE_MODAL_MAX_AGE_SECONDS = 25 * 60
@@ -196,19 +195,19 @@ def _handle_slash_command(event):
     """Slack slash-command payload posted to the /ai-slop route."""
     body = _decode_body(event)
     params = dict(urllib.parse.parse_qsl(body))
-    if "text" not in params or not params["text"]:
-        return _json_response(HELP_TEXT)
-    prompt = params["text"]
+    prompt = params.get("text", "").strip()
     if prompt.strip() in ("-h", "--help", "help"):
         return _json_response(HELP_TEXT)
-    if _is_upload_request(prompt):
-        if "trigger_id" not in params:
-            return _json_response("Slack did not include a trigger_id; cannot open upload modal.")
-        upload_options = _parse_upload_command(prompt)
-        if upload_options["mode"] not in ("image", "video"):
-            return _json_response("Use --upload with -i or -v.")
-        _open_upload_modal(params, upload_options)
-        return _json_response("Opening upload form...")
+    if (not prompt or prompt in ("-i", "-v") or _is_upload_request(prompt)
+            or any(_normalize_flag_token(token) == "--modal" for token in prompt.split())):
+        if not params.get("trigger_id"):
+            return _json_response("Slack did not include a trigger_id; run /slop-bot again to open the form.")
+        options = generation_modal.command_options(prompt, _normalize_flag_token)
+        _slack_api_post("views.open", {
+            "trigger_id": params["trigger_id"],
+            "view": generation_modal.initial_view(params, options),
+        })
+        return _json_payload({})
     user = params["user_name"]
     print("DISPATCH COMMAND: " + prompt + " " + user)
 
@@ -249,6 +248,19 @@ def _handle_interaction(event):
     view = payload.get("view") or {}
     if view.get("callback_id") == "ai_slop_continue":
         return _handle_continue_submission(payload, view)
+    if view.get("callback_id") == generation_modal.CALLBACK_ID:
+        errors, message = generation_modal.submission(view)
+        if errors:
+            return _json_payload({"response_action": "errors", "errors": errors})
+        try:
+            _publish(message)
+        except Exception:  # pylint: disable=broad-except
+            # Keep the filled form open if queueing fails; closing would lose it.
+            traceback.print_exc()
+            return _json_payload({"response_action": "errors", "errors": {
+                "prompt_block": "Could not queue generation. Please try Generate again.",
+            }})
+        return _json_payload({})
     if view.get("callback_id") != "ai_slop_upload":
         return _json_payload({})
 
@@ -275,6 +287,15 @@ def _handle_block_action(payload: dict):
             })
             return _json_payload({})
     view = payload.get("view") or {}
+    if view.get("callback_id") == generation_modal.CALLBACK_ID:
+        request = {
+            "view_id": view["id"],
+            "view": generation_modal.updated_view(view, payload.get("actions") or []),
+        }
+        if view.get("hash"):
+            request["hash"] = view["hash"]
+        _slack_api_post("views.update", request)
+        return _json_payload({})
     if view.get("callback_id") != "ai_slop_upload":
         return _json_payload({})
     actions = payload.get("actions") or []
@@ -481,88 +502,7 @@ def _looks_like_url(token: str) -> bool:
     return parsed.scheme in ("http", "https")
 
 
-def _parse_upload_command(prompt: str) -> dict:
-    """Parse enough flags in dispatch to build the upload modal."""
-    tokens = prompt.split()
-    mode = "text"
-    duration = ""
-    resolution = ""
-    backend = ""
-    video_op = "generate"
-    video_url = ""
-    voices = []
-    prompt_tokens = []
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        lower = _normalize_flag_token(token)
-        if lower == "--upload":
-            pass
-        elif lower == "--edit":
-            if i + 1 < len(tokens) and _looks_like_url(tokens[i + 1]):
-                i += 1
-            else:
-                mode = "image"
-        elif lower in ("--edit-video", "--extend-video"):
-            mode = "video"
-            video_op = "edit" if lower == "--edit-video" else "extend"
-            if i + 1 < len(tokens) and _looks_like_url(tokens[i + 1]):
-                i += 1
-                video_url = tokens[i]
-        elif lower == "-i":
-            mode = "image"
-        elif lower == "-v":
-            mode = "video"
-            if i + 1 < len(tokens) and tokens[i + 1].isdigit():
-                i += 1
-                duration = tokens[i]
-        elif lower == "-b" and i + 1 < len(tokens):
-            i += 1
-            backend = tokens[i].lower()
-        elif lower in ("-r", "--resolution") and i + 1 < len(tokens):
-            # Carried through the modal untouched; the bot Lambda validates it.
-            i += 1
-            resolution = tokens[i].lower()
-        elif lower in ("--ref", "--start") and i + 1 < len(tokens):
-            i += 1
-        elif lower == "--voice" and i + 1 < len(tokens):
-            i += 1
-            voices.append(tokens[i].lower())
-        else:
-            prompt_tokens.append(token)
-        i += 1
-    return {
-        "mode": mode,
-        "duration": duration,
-        "resolution": resolution,
-        "backend": backend,
-        "video_op": video_op,
-        "video_url": video_url,
-        "voices": voices,
-        "prompt": " ".join(prompt_tokens),
-    }
-
-
-def _open_upload_modal(params: dict, upload_options: dict):
-    """Open the Slack file-upload modal for a slash command."""
-    mode = upload_options["mode"]
-    metadata = {
-        "response_url": params["response_url"],
-        "channel_id": params.get("channel_id", ""),
-        "channel_name": params.get("channel_name", ""),
-        "user": params.get("user_name", ""),
-        "mode": mode,
-        # The form has no resolution picker, so keep -r in metadata where it
-        # survives modal rebuilds and can be re-attached on submission.
-        "resolution": upload_options.get("resolution", ""),
-    }
-    payload = {
-        "trigger_id": params["trigger_id"],
-        "view": _upload_view(metadata, upload_options),
-    }
-    _slack_api_post("views.open", payload)
-
-
+# Compatibility for upload forms already open when the unified form is deployed.
 def _upload_view(metadata: dict, upload_options: dict) -> dict:
     """Build the Slack modal view for the current upload options."""
     mode = metadata.get("mode", upload_options.get("mode", "image"))
