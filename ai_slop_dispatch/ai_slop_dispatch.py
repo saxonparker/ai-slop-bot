@@ -465,10 +465,12 @@ def _json_response(message: str):
 
 
 def _json_payload(payload: dict):
-    """Generate a full HTTP JSON response for Slack."""
+    """Return Slack JSON, or an empty acknowledgment when there is no payload."""
     return {
         "statusCode": "200",
-        "body": json.dumps(payload),
+        # Slack can display a slash command's literal '{}' response as a
+        # message. Acknowledge modal opens and interactions with no body.
+        "body": json.dumps(payload) if payload else "",
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",

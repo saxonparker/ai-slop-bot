@@ -899,7 +899,7 @@ def test_continue_submission_publishes_a_conversation_turn(mock_boto, _mock_time
 
     response = ai_slop_dispatch.dispatch(_interaction_request(_continue_submission("  more cats ")), None)
 
-    assert json.loads(response["body"]) == {}
+    assert response["body"] == ""
     inner = json.loads(mock_sns.publish.call_args.kwargs["Message"])
     assert json.loads(inner["default"]) == {
         "source": "conversation",

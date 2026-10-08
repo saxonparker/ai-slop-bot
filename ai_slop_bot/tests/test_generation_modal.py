@@ -67,7 +67,8 @@ def test_slash_entry_points_open_unified_form(command, mode):
     event = {"body": urllib.parse.urlencode({**PARAMS, "text": command})}
     with patch.object(ai_slop_dispatch, "_slack_api_post") as slack, patch.object(ai_slop_dispatch, "_publish") as publish:
         response = ai_slop_dispatch.dispatch(event, None)
-    assert json.loads(response["body"]) == {}
+    assert response["statusCode"] == "200"
+    assert response["body"] == ""  # A literal '{}' becomes an unwanted Slack message.
     method, payload = slack.call_args.args
     assert method == "views.open"
     assert payload["trigger_id"] == "trigger"
@@ -96,7 +97,7 @@ def test_generation_without_uploads_queues_structured_request(mode):
     view = filled(opened(mode))
     with patch.object(ai_slop_dispatch, "_publish") as publish:
         response = ai_slop_dispatch.dispatch(interaction({"type": "view_submission", "view": view}), None)
-    assert json.loads(response["body"]) == {}
+    assert response["body"] == ""
     message = publish.call_args.args[0]
     assert message["source"] == "generation_modal"
     assert message["generation"]["mode"] == mode
@@ -241,7 +242,7 @@ def test_update_uses_slack_hash_and_never_publishes():
     with patch.object(ai_slop_dispatch, "_slack_api_post") as slack, patch.object(ai_slop_dispatch, "_publish") as publish:
         response = ai_slop_dispatch.dispatch(interaction({"type": "block_actions", "view": view,
             "actions": [{"action_id": "mode_image", "value": "image"}]}), None)
-    assert json.loads(response["body"]) == {}
+    assert response["body"] == ""
     method, request = slack.call_args.args
     assert method == "views.update"
     assert request["view_id"] == "V123" and request["hash"] == "hash123"
@@ -261,6 +262,15 @@ def test_oversize_metadata_keeps_current_form_and_draft():
     assert not errors
     assert message["prompt"] == "keep me"
     assert message["reference_images"][-1]["value"] == "F123"
+
+
+def test_closing_generation_form_acknowledges_without_posting():
+    with patch.object(ai_slop_dispatch, "_slack_api_post") as slack, patch.object(ai_slop_dispatch, "_publish") as publish:
+        response = ai_slop_dispatch.dispatch(interaction({"type": "view_closed", "view": opened()}), None)
+    assert response["statusCode"] == "200"
+    assert response["body"] == ""
+    slack.assert_not_called()
+    publish.assert_not_called()
 
 
 def test_command_prefills_all_media_and_text_options():
